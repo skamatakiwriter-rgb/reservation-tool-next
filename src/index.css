@@ -1,0 +1,23 @@
+:root {
+  font-family: "BIZ UDPGothic", "Yu Gothic UI", Meiryo, sans-serif;
+  color: #24342e;
+  background: #f3f6f2;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  --ink: #20352d;
+  --muted: #61716a;
+  --line: #dbe3dd;
+  --surface: #ffffff;
+  --green: #2f6f58;
+  --green-dark: #225540;
+  --green-soft: #e8f2ed;
+  --blue: #396f8f;
+  --blue-soft: #eaf2f7;
+}
+
+* { box-sizing: border-box; }
+html { min-width: 320px; background: #f3f6f2; }
+body { margin: 0; min-width: 320px; min-height: 100vh; }
+button, input, textarea, select { font: inherit; }
+a { color: inherit; }
+:focus-visible { outline: 3px solid #d28d2d; outline-offset: 3px; }
