@@ -4,9 +4,11 @@
 
 ## URL
 
-- `/`：デモ入口
-- `/reserve`：利用者用予約画面
-- `/admin`：管理者用画面
+- 公開サイト：`https://reservation-tool-next-demo.netlify.app/`
+- デモ入口：`https://reservation-tool-next-demo.netlify.app/`
+- 利用者用予約画面：`https://reservation-tool-next-demo.netlify.app/reserve`
+- 管理者用画面：`https://reservation-tool-next-demo.netlify.app/admin`
+- GitHub：`https://github.com/skamatakiwriter-rgb/reservation-tool-next`
 
 ## デモデータ
 
@@ -23,6 +25,8 @@
 4. 公開後は `/`、`/reserve`、`/admin`の直接表示と再読み込みを確認します。
 
 ビルドコマンドは`npm run build`、公開フォルダーは`dist`です。`netlify.toml`のSPA書き換え設定により、`/reserve`と`/admin`を直接開いた場合も`index.html`を表示します。
+
+2026年9月18日にNetlifyへ初回公開し、3つのURLの直接表示と再読み込みが正常に動作することを確認しました。以後、GitHubの`main`ブランチへ反映した変更はNetlifyで自動デプロイされます。
 
 ## コマンド
 
