@@ -20,13 +20,13 @@ describe('ReservationRepository', () => {
     expect(classifyStorageError(new Error('unavailable')).kind).toBe('storageUnavailable')
   })
 
-  it('設計どおりの初期データ8件、上限、停止日、履歴を作る', async () => {
+  it('設計どおりの初期データ9件、上限、停止日、再受付履歴を作る', async () => {
     const repository = makeRepository()
     const initialized = await repository.ensureInitialized()
     const snapshot = await repository.snapshot()
 
     expect(initialized.kind).toBe('initialized')
-    expect(snapshot.reservations).toHaveLength(8)
+    expect(snapshot.reservations).toHaveLength(9)
     expect(snapshot.settings).toHaveLength(3)
     expect(snapshot.settings.every((setting) => setting.dailyLimit === 2)).toBe(true)
     expect(snapshot.closures).toHaveLength(1)
@@ -34,9 +34,16 @@ describe('ReservationRepository', () => {
     expect(snapshot.reservations.find((item) => item.reservationCode === 'DEMO-001')?.status).toBe('completed')
     expect(snapshot.reservations.find((item) => item.reservationCode === 'DEMO-002')?.status).toBe('cancelled')
     expect(snapshot.reservations.find((item) => item.reservationCode === 'DEMO-008')?.overrideType).toBe('fullCapacity')
+    expect(snapshot.reservations.find((item) => item.reservationCode === 'DEMO-009')).toMatchObject({
+      requestedDate: today,
+      status: 'confirmed',
+      sourceReservationId: 'demo-reservation-002',
+    })
     expect(snapshot.reservations.filter((item) => item.workGroupCode === 'GROUP-DEMO-006')).toHaveLength(3)
     expect(snapshot.auditLogs.some((log) => log.entityId === 'demo-reservation-001' && log.action === 'confirmed')).toBe(true)
     expect(snapshot.auditLogs.some((log) => log.entityId === 'demo-reservation-001' && log.action === 'completed')).toBe(true)
+    expect(snapshot.auditLogs).toContainEqual(expect.objectContaining({ entityId: 'demo-reservation-009', action: 'reaccepted', relatedReservationId: 'demo-reservation-002' }))
+    expect(snapshot.auditLogs).toContainEqual(expect.objectContaining({ entityId: 'demo-reservation-002', action: 'reacceptedAs', relatedReservationId: 'demo-reservation-009' }))
     repository.close()
   })
 
@@ -52,7 +59,7 @@ describe('ReservationRepository', () => {
     const expired = await repository.ensureInitialized()
     expect(expired.kind).toBe('initialized')
     expect(expired.metadata.generationId).not.toBe(first.metadata.generationId)
-    expect((await repository.snapshot()).reservations).toHaveLength(8)
+    expect((await repository.snapshot()).reservations).toHaveLength(9)
     repository.close()
   })
 
@@ -81,7 +88,7 @@ describe('ReservationRepository', () => {
     expect(stale.kind).toBe('staleGeneration')
     const restarted = await repository.ensureInitialized()
     expect(restarted.kind).toBe('initialized')
-    expect((await repository.snapshot()).reservations).toHaveLength(8)
+    expect((await repository.snapshot()).reservations).toHaveLength(9)
     repository.close()
   })
 
@@ -99,7 +106,7 @@ describe('ReservationRepository', () => {
     expect(first.kind).toBe('success')
     expect(replay).toEqual({ kind: 'duplicateSuccess', payload: first.kind === 'success' ? first.payload : undefined })
     expect(conflict.kind).toBe('idempotencyConflict')
-    expect((await repository.snapshot()).reservations).toHaveLength(9)
+    expect((await repository.snapshot()).reservations).toHaveLength(10)
     const operation = await repository.findOperationResult(initialized.metadata.generationId, 'same-key')
     expect(operation?.resultPayload.reservationId).toBe(first.kind === 'success' ? first.payload.reservationId : '')
     repository.close()
@@ -129,7 +136,7 @@ describe('ReservationRepository', () => {
     expect(retained.kind).toBe('retained')
     expect(operation?.resultPayload).toEqual(first.kind === 'success' ? first.payload : undefined)
     expect(replay.kind).toBe('duplicateSuccess')
-    expect((await reopenedRepository.snapshot()).reservations).toHaveLength(9)
+    expect((await reopenedRepository.snapshot()).reservations).toHaveLength(10)
     reopenedRepository.close()
   })
 

@@ -65,7 +65,7 @@ function AdminWorkspace({ onExit }: { onExit: () => void }) {
   if (error || !snapshot?.metadata) return <div className="page admin-page"><div className="error-summary" role="alert">{error ?? '管理データを読み込めませんでした。'}</div></div>
 
   const reset = async () => {
-    if (!window.confirm('このブラウザ内の変更を消去し、架空の初期予約8件へ戻します。よろしいですか？')) return
+    if (!window.confirm('このブラウザ内の変更を消去し、架空の初期予約9件へ戻します。よろしいですか？')) return
     const response = await demoRepository.resetDemoData(snapshot.metadata!.generationId)
     if (response.kind === 'success' || response.kind === 'duplicateSuccess') publishDemoChange('reset')
     setMessage(resultMessage(response, '初期状態に戻しました。'))

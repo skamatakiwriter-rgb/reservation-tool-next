@@ -15,16 +15,27 @@ export function createSeedData(today: string, now: string, generationId: string)
   const [, f2, f3, f4] = futureOpenDates(addCalendarDays(today, 3), 4)
   const sharedGroupId = 'demo-work-group-006'
   const sharedGroupCode = 'GROUP-DEMO-006'
+  const cancelledReservation = makeReservation(2, p1, 'kagu', 'cancelled', now, { itemsAndQuantities: '事務机 1台、椅子 2脚' })
+  const reacceptedReservation: Reservation = {
+    ...makeReservation(9, isSunday(today) ? addCalendarDays(today, 1) : today, 'kagu', 'confirmed', now, { itemsAndQuantities: '事務机 1台、椅子 2脚' }),
+    companyName: cancelledReservation.companyName,
+    contactName: cancelledReservation.contactName,
+    phoneDisplay: cancelledReservation.phoneDisplay,
+    phoneNormalized: cancelledReservation.phoneNormalized,
+    address: cancelledReservation.address,
+    sourceReservationId: cancelledReservation.reservationId,
+  }
 
   const reservations: Reservation[] = [
     makeReservation(1, p2, 'keikoukan', 'completed', now, { approximateTubeCount: 24 }),
-    makeReservation(2, p1, 'kagu', 'cancelled', now, { itemsAndQuantities: '事務机 1台、椅子 2脚' }),
+    cancelledReservation,
     makeReservation(3, f2, 'binkan', 'received', now, { typesAndQuantities: '空き缶 3袋' }),
     makeReservation(4, f2, 'binkan', 'received', now, { typesAndQuantities: 'ビン 2箱' }),
     makeReservation(5, f3, 'kagu', 'confirmed', now, { itemsAndQuantities: '書庫 1台' }),
     makeReservation(6, f4, 'keikoukan', 'confirmed', now, { approximateTubeCount: 30 }, sharedGroupId, sharedGroupCode),
     makeReservation(7, f4, 'keikoukan', 'confirmed', now, { approximateTubeCount: 18 }, sharedGroupId, sharedGroupCode),
     { ...makeReservation(8, f4, 'keikoukan', 'confirmed', now, { approximateTubeCount: 12 }, sharedGroupId, sharedGroupCode), overrideType: 'fullCapacity' },
+    reacceptedReservation,
   ]
 
   const settings: CategorySetting[] = (['keikoukan', 'kagu', 'binkan'] satisfies CategoryId[]).map((categoryId) => ({
@@ -60,7 +71,19 @@ export function createSeedData(today: string, now: string, generationId: string)
     reservations,
     settings,
     closures: [closure],
-    auditLogs: reservations.flatMap((reservation) => createSeedAuditLogs(reservation, now)),
+    auditLogs: [
+      ...reservations.flatMap((reservation) => createSeedAuditLogs(reservation, now)),
+      {
+        auditId: `${cancelledReservation.reservationId}-reaccepted-as`,
+        entityType: 'reservation',
+        entityId: cancelledReservation.reservationId,
+        action: 'reacceptedAs',
+        after: { reservationId: reacceptedReservation.reservationId, reservationCode: reacceptedReservation.reservationCode, requestedDate: reacceptedReservation.requestedDate },
+        actor: 'demo-system',
+        occurredAt: now,
+        relatedReservationId: reacceptedReservation.reservationId,
+      },
+    ],
   }
 }
 
@@ -114,17 +137,19 @@ function makeReservation(
 }
 
 function createSeedAuditLogs(reservation: Reservation, now: string): AuditLog[] {
+  const isReaccepted = Boolean(reservation.sourceReservationId)
   const logs: AuditLog[] = [{
     auditId: `${reservation.reservationId}-created`,
     entityType: 'reservation',
     entityId: reservation.reservationId,
-    action: 'created',
+    action: isReaccepted ? 'reaccepted' : 'created',
     after: { status: reservation.status, requestedDate: reservation.requestedDate },
     actor: 'demo-system',
     occurredAt: now,
+    relatedReservationId: reservation.sourceReservationId,
     note: reservation.overrideType === 'fullCapacity' ? '満枠への例外受付例' : undefined,
   }]
-  if (reservation.status === 'confirmed' || reservation.status === 'completed') {
+  if (!isReaccepted && (reservation.status === 'confirmed' || reservation.status === 'completed')) {
     logs.push(statusLog(reservation, 'confirmed', now, 'confirmed'))
   }
   if (reservation.status === 'completed') logs.push(statusLog(reservation, 'completed', now))
