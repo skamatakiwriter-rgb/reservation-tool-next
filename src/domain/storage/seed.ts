@@ -24,6 +24,9 @@ export function createSeedData(today: string, now: string, generationId: string)
     phoneNormalized: cancelledReservation.phoneNormalized,
     address: cancelledReservation.address,
     sourceReservationId: cancelledReservation.reservationId,
+    createdAt: now,
+    confirmedAt: now,
+    updatedAt: now,
   }
 
   const reservations: Reservation[] = [
@@ -99,6 +102,7 @@ function makeReservation(
 ): Reservation {
   const suffix = String(number).padStart(3, '0')
   const isFluorescent = categoryId === 'keikoukan'
+  const createdAt = minutesBefore(now, 3)
   const reservation: Reservation = {
     reservationId: `demo-reservation-${suffix}`,
     reservationCode: `DEMO-${suffix}`,
@@ -114,24 +118,27 @@ function makeReservation(
     address: isFluorescent ? undefined : `架空県架空市${number}番地`,
     contactNotes: '',
     categoryAnswers,
-    createdAt: now,
+    createdAt,
     createdBy: 'demo-system',
-    updatedAt: now,
+    updatedAt: createdAt,
     version: 1,
   }
 
   if (status === 'confirmed' || status === 'completed') {
-    reservation.confirmedAt = now
+    reservation.confirmedAt = minutesBefore(now, 2)
     reservation.confirmedBy = 'demo-system'
+    reservation.updatedAt = reservation.confirmedAt
   }
   if (status === 'completed') {
-    reservation.completedAt = now
+    reservation.completedAt = minutesBefore(now, 1)
     reservation.completedBy = 'demo-system'
+    reservation.updatedAt = reservation.completedAt
   }
   if (status === 'cancelled') {
-    reservation.cancelledAt = now
+    reservation.cancelledAt = minutesBefore(now, 1)
     reservation.cancelledBy = 'demo-system'
     reservation.cancelReason = 'デモ用の取消例'
+    reservation.updatedAt = reservation.cancelledAt
   }
   return reservation
 }
@@ -145,15 +152,15 @@ function createSeedAuditLogs(reservation: Reservation, now: string): AuditLog[] 
     action: isReaccepted ? 'reaccepted' : 'created',
     after: { status: reservation.status, requestedDate: reservation.requestedDate },
     actor: 'demo-system',
-    occurredAt: now,
+    occurredAt: reservation.createdAt,
     relatedReservationId: reservation.sourceReservationId,
     note: reservation.overrideType === 'fullCapacity' ? '満枠への例外受付例' : undefined,
   }]
   if (!isReaccepted && (reservation.status === 'confirmed' || reservation.status === 'completed')) {
-    logs.push(statusLog(reservation, 'confirmed', now, 'confirmed'))
+    logs.push(statusLog(reservation, 'confirmed', reservation.confirmedAt ?? now, 'confirmed'))
   }
-  if (reservation.status === 'completed') logs.push(statusLog(reservation, 'completed', now))
-  if (reservation.status === 'cancelled') logs.push(statusLog(reservation, 'cancelled', now))
+  if (reservation.status === 'completed') logs.push(statusLog(reservation, 'completed', reservation.completedAt ?? now))
+  if (reservation.status === 'cancelled') logs.push(statusLog(reservation, 'cancelled', reservation.cancelledAt ?? now))
   return logs
 }
 
@@ -192,4 +199,8 @@ function futureOpenDates(start: string, count: number): string[] {
     candidate = addCalendarDays(candidate, 1)
   }
   return result
+}
+
+function minutesBefore(value: string, minutes: number): string {
+  return new Date(new Date(value).getTime() - minutes * 60 * 1000).toISOString()
 }

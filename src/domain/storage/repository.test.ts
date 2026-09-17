@@ -44,6 +44,11 @@ describe('ReservationRepository', () => {
     expect(snapshot.auditLogs.some((log) => log.entityId === 'demo-reservation-001' && log.action === 'completed')).toBe(true)
     expect(snapshot.auditLogs).toContainEqual(expect.objectContaining({ entityId: 'demo-reservation-009', action: 'reaccepted', relatedReservationId: 'demo-reservation-002' }))
     expect(snapshot.auditLogs).toContainEqual(expect.objectContaining({ entityId: 'demo-reservation-002', action: 'reacceptedAs', relatedReservationId: 'demo-reservation-009' }))
+    const sourceHistory = snapshot.auditLogs
+      .filter((log) => log.entityId === 'demo-reservation-002')
+      .sort((a, b) => a.occurredAt.localeCompare(b.occurredAt))
+    expect(sourceHistory.map((log) => log.action)).toEqual(['created', 'cancelled', 'reacceptedAs'])
+    expect(new Set(sourceHistory.map((log) => log.occurredAt))).toHaveProperty('size', 3)
     repository.close()
   })
 

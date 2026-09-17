@@ -176,7 +176,7 @@ function ReservationList({ snapshot, filters, onFilters, onOpen }: { snapshot: D
 type DetailProps = { reservation: Reservation; snapshot: DemoSnapshot; onClose: () => void; onEdit: (r: Reservation) => void; onRelated: (r: Reservation) => void; onReuse: (r: Reservation) => void; onRefresh: () => Promise<void>; onMessage: (text: string) => void }
 function ReservationDetail(props: DetailProps) {
   const { reservation, snapshot } = props
-  const logs = snapshot.auditLogs.filter((item) => item.entityId === reservation.reservationId).sort((a,b) => b.occurredAt.localeCompare(a.occurredAt))
+  const logs = snapshot.auditLogs.filter((item) => item.entityId === reservation.reservationId).sort((a,b) => a.occurredAt.localeCompare(b.occurredAt))
   const related = snapshot.reservations.filter((item) => item.workGroupId === reservation.workGroupId && item.reservationId !== reservation.reservationId)
   const reacceptSource = reservation.sourceReservationId ? snapshot.reservations.find((item) => item.reservationId === reservation.sourceReservationId && item.status === 'cancelled') : undefined
   const reacceptedReservations = reservation.status === 'cancelled' ? snapshot.reservations.filter((item) => item.sourceReservationId === reservation.reservationId) : []

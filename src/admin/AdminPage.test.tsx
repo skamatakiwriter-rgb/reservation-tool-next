@@ -50,6 +50,21 @@ describe('管理者画面', () => {
     expect(screen.queryByRole('dialog', { name: 'DEMO-003' })).not.toBeInTheDocument()
   })
 
+  it('操作履歴を予約作成から現在の状態まで古い順に表示する', async () => {
+    renderPage()
+    await startAdmin()
+    fireEvent.click(screen.getByRole('button', { name: '予約一覧' }))
+    fireEvent.change(screen.getByPlaceholderText('受付番号・会社名・担当者名・電話番号'), { target: { value: 'DEMO-002' } })
+    fireEvent.click(await screen.findByText('DEMO-002'))
+    const dialog = screen.getByRole('dialog', { name: 'DEMO-002' })
+    const history = within(dialog).getByRole('heading', { name: '操作履歴' }).parentElement!
+    expect(Array.from(history.querySelectorAll('strong'), (item) => item.textContent)).toEqual([
+      '予約作成',
+      '取消',
+      '新しい予約として再受付',
+    ])
+  })
+
   it('受付状態の予約を確定し、更新結果を表示する', async () => {
     renderPage()
     await startAdmin()
