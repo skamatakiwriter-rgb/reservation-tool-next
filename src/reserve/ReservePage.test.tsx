@@ -34,6 +34,19 @@ describe('利用者予約画面', () => {
     expect(screen.getByText('住所を入力してください。')).toBeInTheDocument()
   })
 
+  it('蛍光管の本数欄はホイール操作前にフォーカスを外す', async () => {
+    renderPage()
+    fireEvent.click(await screen.findByRole('button', { name: /蛍光管持込/ }))
+    const countInput = screen.getByRole('spinbutton', { name: /^おおよその本数/ })
+    fireEvent.change(countInput, { target: { value: '100' } })
+    countInput.focus()
+
+    fireEvent.wheel(countInput, { deltaY: 100 })
+
+    expect(countInput).toHaveValue(100)
+    expect(countInput).not.toHaveFocus()
+  })
+
   it('蛍光管予約を確認して保存し、確定状態と受付番号を表示する', async () => {
     renderPage()
     fireEvent.click(await screen.findByRole('button', { name: /蛍光管持込/ }))
