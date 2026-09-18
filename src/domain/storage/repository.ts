@@ -333,7 +333,7 @@ export class ReservationRepository {
         entityType: 'reservation',
         entityId: reacceptSource.reservationId,
         action: 'reacceptedAs',
-        after: { reservationId, reservationCode: reservation.reservationCode, requestedDate: reservation.requestedDate },
+        after: { reservationId, reservationCode: reservation.reservationCode, requestedDate: reservation.requestedDate, status },
         actor: command.actor,
         occurredAt: now,
         relatedReservationId: reservationId,

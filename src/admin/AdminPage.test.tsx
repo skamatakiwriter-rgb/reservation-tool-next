@@ -61,8 +61,12 @@ describe('管理者画面', () => {
     expect(Array.from(history.querySelectorAll('strong'), (item) => item.textContent)).toEqual([
       '予約作成',
       '取消',
-      '新しい予約として再受付',
+      '新しい予約として再受付（確定）',
     ])
+    fireEvent.click(within(dialog).getByRole('button', { name: '予約詳細を閉じる' }))
+    fireEvent.change(screen.getByPlaceholderText('受付番号・会社名・担当者名・電話番号'), { target: { value: 'DEMO-009' } })
+    fireEvent.click(await screen.findByText('DEMO-009'))
+    expect(within(screen.getByRole('dialog', { name: 'DEMO-009' })).getByText('取消予約から再受付（確定）')).toBeInTheDocument()
   })
 
   it('受付状態の予約を確定し、更新結果を表示する', async () => {

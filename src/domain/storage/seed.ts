@@ -81,7 +81,7 @@ export function createSeedData(today: string, now: string, generationId: string)
         entityType: 'reservation',
         entityId: cancelledReservation.reservationId,
         action: 'reacceptedAs',
-        after: { reservationId: reacceptedReservation.reservationId, reservationCode: reacceptedReservation.reservationCode, requestedDate: reacceptedReservation.requestedDate },
+        after: { reservationId: reacceptedReservation.reservationId, reservationCode: reacceptedReservation.reservationCode, requestedDate: reacceptedReservation.requestedDate, status: reacceptedReservation.status },
         actor: 'demo-system',
         occurredAt: now,
         relatedReservationId: reacceptedReservation.reservationId,
