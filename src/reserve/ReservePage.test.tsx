@@ -19,7 +19,7 @@ describe('利用者予約画面', () => {
     expect(screen.getByRole('button', { name: /ビン缶回収/ })).toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('button', { name: /蛍光管持込/ }))
-    expect(screen.getByRole('heading', { name: '蛍光管持込の予約内容' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: '蛍光管持込の申込み内容' })).toBeInTheDocument()
     expect(screen.getByRole('grid', { name: /予約可能日/ })).toBeInTheDocument()
     expect(screen.getByLabelText(/おおよその本数/)).toBeInTheDocument()
   })

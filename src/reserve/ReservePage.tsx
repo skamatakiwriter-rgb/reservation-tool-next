@@ -179,7 +179,7 @@ function InputStep({ input, errors, snapshot, today, onUpdate, onAnswer, onBack,
   const category = categories.find((item) => item.id === input.categoryId)!
   return (
     <section className="form-card">
-      <div className="section-heading"><span>STEP 2</span><h2>{category.name}の予約内容</h2><p>{descriptions[input.categoryId]}</p></div>
+      <div className="section-heading"><span>STEP 2</span><h2>{category.name}の申込み内容</h2><p>{descriptions[input.categoryId]}</p></div>
       {errors.length > 0 && <div className="error-summary" role="alert"><strong>入力内容を確認してください</strong><span>{errors.length}件の修正が必要です。</span></div>}
       <div className="form-grid">
         <Field label="会社名" name="companyName" error={errorMap.companyName}><input id="field-companyName" value={input.companyName} maxLength={100} onChange={(e) => onUpdate('companyName', e.target.value)} /></Field>
