@@ -1,5 +1,6 @@
 import { evaluateAvailability } from '../availability'
 import { todayInJapan } from '../dateRules'
+import type { DispatchAssignment, Driver, InternalNote, Vehicle } from '../dispatchTypes'
 import { initialStatus, canTransition } from '../statusRules'
 import type {
   Actor,
@@ -17,7 +18,7 @@ import type {
 import { normalizePhoneNumber, validateReservationInput } from '../validation'
 import { fingerprint } from './fingerprint'
 import { openReservationDatabase, requestResult, transactionDone } from './idb'
-import { createSeedData } from './seed'
+import { createDriverSeed, createSeedData, createVehicleSeed } from './seed'
 import { allStoreNames, SCHEMA_VERSION, SEED_VERSION, storeNames } from './schema'
 
 const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000
@@ -28,6 +29,10 @@ export type DemoSnapshot = {
   settings: CategorySetting[]
   closures: Closure[]
   auditLogs: AuditLog[]
+  vehicles: Vehicle[]
+  drivers: Driver[]
+  dispatchAssignments: DispatchAssignment[]
+  internalNotes: InternalNote[]
 }
 
 export type InitializationResult = {
@@ -115,7 +120,14 @@ export class ReservationRepository {
   }
 
   async open(): Promise<void> {
-    if (!this.database) this.database = await openReservationDatabase(this.databaseName)
+    if (!this.database) {
+      const database = await openReservationDatabase(this.databaseName)
+      database.onversionchange = () => {
+        database.close()
+        if (this.database === database) this.database = undefined
+      }
+      this.database = database
+    }
   }
 
   close(): void {
@@ -133,8 +145,33 @@ export class ReservationRepository {
     const expired = current?.lifecycleState === 'active'
       && this.now().getTime() - new Date(current.lastUsedAt).getTime() > SEVEN_DAYS_MS
 
-    if (current?.lifecycleState === 'active' && !expired && current.schemaVersion === SCHEMA_VERSION && current.seedVersion === SEED_VERSION) {
-      const updated = { ...current, lastUsedAt: now, updatedAt: now }
+    if (current?.lifecycleState === 'active' && !expired) {
+      if (current.schemaVersion !== 1 && current.schemaVersion !== SCHEMA_VERSION) {
+        transaction.abort()
+        await ignoreAbort(done)
+        throw new Error(`未対応のデータ形式です: ${current.schemaVersion}`)
+      }
+      if (current.schemaVersion === 1) {
+        const vehicleStore = transaction.objectStore(storeNames.vehicles)
+        const driverStore = transaction.objectStore(storeNames.drivers)
+        if (await requestResult(vehicleStore.count()) === 0) {
+          createVehicleSeed().forEach((vehicle) => vehicleStore.add(vehicle))
+        }
+        if (await requestResult(driverStore.count()) === 0) {
+          createDriverSeed().forEach((driver) => driverStore.add(driver))
+        }
+        transaction.objectStore(storeNames.auditLogs).add({
+          auditId: this.createId(),
+          entityType: 'demo',
+          entityId: 'demo',
+          action: 'schemaMigrated',
+          before: { schemaVersion: 1 },
+          after: { schemaVersion: SCHEMA_VERSION },
+          actor: 'demo-system',
+          occurredAt: now,
+        } satisfies AuditLog)
+      }
+      const updated = { ...current, schemaVersion: SCHEMA_VERSION, seedVersion: SEED_VERSION, lastUsedAt: now, updatedAt: now }
       metadataStore.put(updated)
       await done
       return { kind: 'retained', metadata: updated }
@@ -572,12 +609,16 @@ export class ReservationRepository {
   async snapshot(): Promise<DemoSnapshot> {
     const database = await this.getDatabase()
     const transaction = database.transaction(allStoreNames, 'readonly')
-    const [metadata, reservations, settings, closures, auditLogs] = await Promise.all([
+    const [metadata, reservations, settings, closures, auditLogs, vehicles, drivers, dispatchAssignments, internalNotes] = await Promise.all([
       requestResult(transaction.objectStore(storeNames.metadata).get('demo')),
       requestResult(transaction.objectStore(storeNames.reservations).getAll()),
       requestResult(transaction.objectStore(storeNames.settings).getAll()),
       requestResult(transaction.objectStore(storeNames.closures).getAll()),
       requestResult(transaction.objectStore(storeNames.auditLogs).getAll()),
+      requestResult(transaction.objectStore(storeNames.vehicles).getAll()),
+      requestResult(transaction.objectStore(storeNames.drivers).getAll()),
+      requestResult(transaction.objectStore(storeNames.dispatchAssignments).getAll()),
+      requestResult(transaction.objectStore(storeNames.internalNotes).getAll()),
     ])
     return {
       metadata: metadata as DemoMetadata | undefined,
@@ -585,6 +626,10 @@ export class ReservationRepository {
       settings: settings as CategorySetting[],
       closures: closures as Closure[],
       auditLogs: auditLogs as AuditLog[],
+      vehicles: vehicles as Vehicle[],
+      drivers: drivers as Driver[],
+      dispatchAssignments: dispatchAssignments as DispatchAssignment[],
+      internalNotes: internalNotes as InternalNote[],
     }
   }
 
@@ -622,6 +667,10 @@ export class ReservationRepository {
     seed.settings.forEach((setting) => transaction.objectStore(storeNames.settings).add(setting))
     seed.closures.forEach((closure) => transaction.objectStore(storeNames.closures).add(closure))
     seed.auditLogs.forEach((audit) => transaction.objectStore(storeNames.auditLogs).add(audit))
+    seed.vehicles.forEach((vehicle) => transaction.objectStore(storeNames.vehicles).add(vehicle))
+    seed.drivers.forEach((driver) => transaction.objectStore(storeNames.drivers).add(driver))
+    seed.dispatchAssignments.forEach((assignment) => transaction.objectStore(storeNames.dispatchAssignments).add(assignment))
+    seed.internalNotes.forEach((note) => transaction.objectStore(storeNames.internalNotes).add(note))
     return seed.metadata
   }
 

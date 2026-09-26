@@ -1,4 +1,5 @@
 import { addCalendarDays, isSunday } from '../dateRules'
+import type { DispatchAssignment, Driver, InternalNote, Vehicle } from '../dispatchTypes'
 import type { AuditLog, CategoryId, CategorySetting, Closure, DemoMetadata, Reservation } from '../types'
 import { SCHEMA_VERSION, SEED_VERSION } from './schema'
 
@@ -8,6 +9,26 @@ export type SeedData = {
   settings: CategorySetting[]
   closures: Closure[]
   auditLogs: AuditLog[]
+  vehicles: Vehicle[]
+  drivers: Driver[]
+  dispatchAssignments: DispatchAssignment[]
+  internalNotes: InternalNote[]
+}
+
+export function createVehicleSeed(): Vehicle[] {
+  return [
+    { vehicleId: 'demo-vehicle-001', vehicleCode: 'VEH-DEMO-001', displayName: '2t平ボディ1号', vehicleType: '2t平ボディ', isActive: true, version: 1 },
+    { vehicleId: 'demo-vehicle-002', vehicleCode: 'VEH-DEMO-002', displayName: '2t箱車1号', vehicleType: '2t箱車', isActive: true, version: 1 },
+    { vehicleId: 'demo-vehicle-003', vehicleCode: 'VEH-DEMO-003', displayName: 'パッカー車1号', vehicleType: 'パッカー車', isActive: true, version: 1 },
+  ]
+}
+
+export function createDriverSeed(): Driver[] {
+  return [
+    { driverId: 'demo-driver-001', driverCode: 'DRV-DEMO-001', displayName: '収集担当A', isActive: true, version: 1 },
+    { driverId: 'demo-driver-002', driverCode: 'DRV-DEMO-002', displayName: '収集担当B', isActive: true, version: 1 },
+    { driverId: 'demo-driver-003', driverCode: 'DRV-DEMO-003', displayName: '収集担当C', isActive: true, version: 1 },
+  ]
 }
 
 export function createSeedData(today: string, now: string, generationId: string): SeedData {
@@ -74,6 +95,10 @@ export function createSeedData(today: string, now: string, generationId: string)
     reservations,
     settings,
     closures: [closure],
+    vehicles: createVehicleSeed(),
+    drivers: createDriverSeed(),
+    dispatchAssignments: [],
+    internalNotes: [],
     auditLogs: [
       ...reservations.flatMap((reservation) => createSeedAuditLogs(reservation, now)),
       {

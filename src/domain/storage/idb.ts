@@ -4,7 +4,10 @@ export function openReservationDatabase(databaseName: string): Promise<IDBDataba
   return new Promise((resolve, reject) => {
     const request = indexedDB.open(databaseName, DATABASE_VERSION)
     request.onupgradeneeded = () => upgradeSchema(request.result)
-    request.onsuccess = () => resolve(request.result)
+    request.onsuccess = () => {
+      request.result.onversionchange = () => request.result.close()
+      resolve(request.result)
+    }
     request.onerror = () => reject(request.error ?? new Error('データベースを開けませんでした。'))
     request.onblocked = () => reject(new Error('別の画面がデータベース更新を妨げています。'))
   })
