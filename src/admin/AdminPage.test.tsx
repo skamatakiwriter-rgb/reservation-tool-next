@@ -1,13 +1,17 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { MemoryRouter } from 'react-router'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { AdminPage } from './AdminPage'
 
 beforeEach(() => {
+  vi.useFakeTimers({ toFake: ['Date'] })
+  vi.setSystemTime(new Date('2026-09-18T03:00:00.000Z'))
   sessionStorage.clear()
   window.confirm = vi.fn(() => true)
   window.prompt = vi.fn(() => '')
 })
+
+afterEach(() => vi.useRealTimers())
 
 function renderPage() {
   return render(<MemoryRouter><AdminPage /></MemoryRouter>)

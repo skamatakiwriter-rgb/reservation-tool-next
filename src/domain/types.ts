@@ -39,7 +39,7 @@ export type ValidationError = {
   message: string
 }
 
-export type Actor = 'demo-user' | 'demo-admin' | 'demo-system'
+export type Actor = 'demo-user' | 'demo-admin' | 'demo-system' | `demo-driver:${string}`
 
 export type Reservation = ReservationForCapacity & {
   reservationCode: string
@@ -81,7 +81,7 @@ export type Closure = {
 
 export type AuditLog = {
   auditId: string
-  entityType: 'reservation' | 'categorySetting' | 'closure' | 'demo'
+  entityType: 'reservation' | 'categorySetting' | 'closure' | 'demo' | 'dispatch' | 'vehicle' | 'driver' | 'internalNote'
   entityId: string
   action: string
   before?: Record<string, unknown>
@@ -97,6 +97,12 @@ export type OperationResultPayload = {
   reservationCode?: string
   version?: number
   generationId: string
+  dispatchId?: string
+  dispatchVersion?: number
+  attemptNumber?: number
+  noteId?: string
+  vehicleId?: string
+  vehicleVersion?: number
 }
 
 export type IdempotencyRecord = {
