@@ -11,4 +11,17 @@ describe('デモデータ同期通知', () => {
     publishDemoChange('setting', 'kagu')
     expect(listener).toHaveBeenCalledTimes(1)
   })
+
+  it.each(['dispatch', 'dispatchStatus', 'internalNote', 'vehicle', 'driver'] as const)('%sの通知は種別・対象ID・時刻だけを含む', (type) => {
+    const listener = vi.fn()
+    const unsubscribe = subscribeToDemoChanges(listener)
+    publishDemoChange(type, `${type}-1`)
+    const change = listener.mock.calls.at(-1)?.[0]
+    expect(Object.keys(change).sort()).toEqual(['occurredAt', 'targetId', 'type'])
+    expect(change).toMatchObject({ type, targetId: `${type}-1` })
+    expect(new Date(change.occurredAt).toString()).not.toBe('Invalid Date')
+    expect(JSON.stringify(change)).not.toContain('電話')
+    expect(JSON.stringify(change)).not.toContain('住所')
+    unsubscribe()
+  })
 })

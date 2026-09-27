@@ -1,5 +1,5 @@
 export type DemoChange = {
-  type: 'reservation' | 'status' | 'setting' | 'closure' | 'reset' | 'deleted'
+  type: 'reservation' | 'status' | 'setting' | 'closure' | 'dispatch' | 'dispatchStatus' | 'internalNote' | 'vehicle' | 'driver' | 'reset' | 'deleted'
   targetId?: string
   occurredAt: string
 }
