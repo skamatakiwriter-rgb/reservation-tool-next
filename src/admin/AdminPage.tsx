@@ -45,7 +45,7 @@ function AdminWelcome({ onStart }: { onStart: () => void }) {
 }
 
 function AdminWorkspace({ onExit }: { onExit: () => void }) {
-  const { snapshot, loading, error, refresh } = useDemoData()
+  const { snapshot, loading, error, refresh } = useDemoData('admin')
   const today = todayInJapan()
   const [view, setView] = useState<View>('calendar')
   const [categoryId, setCategoryId] = useState<CalendarCategoryId>('')

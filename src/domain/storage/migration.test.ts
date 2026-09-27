@@ -125,7 +125,7 @@ describe('Ver1からVer2への保存データ移行', () => {
     const retained = await repository.ensureInitialized()
     expect(retained.kind).toBe('retained')
     expect(retained.metadata.generationId).toBe(initialized.metadata.generationId)
-    expect((await repository.snapshot()).reservations).toHaveLength(9)
+    expect((await repository.snapshot()).reservations).toHaveLength(17)
     repository.close()
   })
 })

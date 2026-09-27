@@ -606,7 +606,7 @@ export class ReservationRepository {
     return await requestResult(transaction.objectStore(storeNames.idempotency).get([generationId, idempotencyKey])) as IdempotencyRecord | undefined
   }
 
-  async snapshot(): Promise<DemoSnapshot> {
+  async snapshot(scope: 'admin' | 'public' | 'driver' = 'admin'): Promise<DemoSnapshot> {
     const database = await this.getDatabase()
     const transaction = database.transaction(allStoreNames, 'readonly')
     const [metadata, reservations, settings, closures, auditLogs, vehicles, drivers, dispatchAssignments, internalNotes] = await Promise.all([
@@ -614,11 +614,11 @@ export class ReservationRepository {
       requestResult(transaction.objectStore(storeNames.reservations).getAll()),
       requestResult(transaction.objectStore(storeNames.settings).getAll()),
       requestResult(transaction.objectStore(storeNames.closures).getAll()),
-      requestResult(transaction.objectStore(storeNames.auditLogs).getAll()),
-      requestResult(transaction.objectStore(storeNames.vehicles).getAll()),
-      requestResult(transaction.objectStore(storeNames.drivers).getAll()),
-      requestResult(transaction.objectStore(storeNames.dispatchAssignments).getAll()),
-      requestResult(transaction.objectStore(storeNames.internalNotes).getAll()),
+      scope === 'admin' ? requestResult(transaction.objectStore(storeNames.auditLogs).getAll()) : Promise.resolve([]),
+      scope === 'public' ? Promise.resolve([]) : requestResult(transaction.objectStore(storeNames.vehicles).getAll()),
+      scope === 'public' ? Promise.resolve([]) : requestResult(transaction.objectStore(storeNames.drivers).getAll()),
+      scope === 'public' ? Promise.resolve([]) : requestResult(transaction.objectStore(storeNames.dispatchAssignments).getAll()),
+      scope === 'admin' ? requestResult(transaction.objectStore(storeNames.internalNotes).getAll()) : Promise.resolve([]),
     ])
     return {
       metadata: metadata as DemoMetadata | undefined,

@@ -11,21 +11,21 @@ type DemoDataState = {
   refresh: () => Promise<void>
 }
 
-export function useDemoData(): DemoDataState {
+export function useDemoData(scope: 'public' | 'admin' | 'driver' = 'public'): DemoDataState {
   const [snapshot, setSnapshot] = useState<DemoSnapshot>()
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string>()
 
   const refresh = useCallback(async () => {
-    setSnapshot(await repository.snapshot())
-  }, [])
+    setSnapshot(await repository.snapshot(scope))
+  }, [scope])
 
   useEffect(() => {
     let active = true
     const initialize = async () => {
       try {
         await repository.ensureInitialized()
-        const next = await repository.snapshot()
+        const next = await repository.snapshot(scope)
         if (active) setSnapshot(next)
       } catch {
         if (active) setError('ブラウザ内のデモデータを読み込めませんでした。再読み込みしてお試しください。')
@@ -35,7 +35,7 @@ export function useDemoData(): DemoDataState {
     }
     void initialize()
     return () => { active = false }
-  }, [])
+  }, [scope])
 
   useEffect(() => {
     const reload = () => { void refresh().catch(() => setError('最新のデモデータを読み込めませんでした。')) }

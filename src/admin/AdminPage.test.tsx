@@ -31,7 +31,7 @@ describe('管理者画面', () => {
     expect(screen.getByText('確定件数')).toBeInTheDocument()
     expect(screen.getByRole('grid', { name: /管理カレンダー/ })).toBeInTheDocument()
     expect(screen.getByLabelText('カテゴリー')).toHaveValue('')
-    const dayWithReceivedReservations = screen.getByRole('gridcell', { name: /2件/ })
+    const dayWithReceivedReservations = screen.getByRole('gridcell', { name: /^22\s*2件$/ })
     fireEvent.click(dayWithReceivedReservations)
     expect(within(screen.getByRole('complementary')).getAllByText('受付')).toHaveLength(2)
     expect(screen.getByRole('button', { name: '電話受付を登録' })).toBeInTheDocument()
