@@ -3,7 +3,7 @@ import { categoryRequiresDispatch } from '../categories'
 import { todayInJapan } from '../dateRules'
 import { timeRangesOverlap } from '../dispatchRules'
 import { snapshotForDispatch, type CollectionOutcome, type DispatchAssignment, type Driver, type InternalNote, type Vehicle } from '../dispatchTypes'
-import { validateCollectionOutcome, validateDispatchCancelReason, validateDispatchPlan, validateVehicleHoldReason, type DispatchPlanInput } from '../dispatchValidation'
+import { validateCollectionOutcome, validateDispatchCancelReason, validateDispatchPlan, validateInternalNote, validateVehicleHoldReason, type DispatchPlanInput } from '../dispatchValidation'
 import { initialStatus, canTransition } from '../statusRules'
 import type {
   Actor,
@@ -173,6 +173,16 @@ export type ReleaseVehicleLoadHoldCommand = {
   vehicleId: string
   expectedVehicleVersion: number
   reason: string
+}
+
+export type AcknowledgeDispatchReviewCommand = DispatchWorkCommand
+
+export type AddInternalNoteCommand = {
+  generationId: string
+  idempotencyKey: string
+  actor: Actor
+  reservationId: string
+  body: string
 }
 
 type RepositoryOptions = {
@@ -1140,6 +1150,93 @@ export class ReservationRepository {
     vehicleStore.put(updated)
     transaction.objectStore(storeNames.auditLogs).add({ auditId: this.createId(), entityType: 'vehicle', entityId: vehicle.vehicleId, action: 'loadHoldReleased', before: { status: vehicle.loadHold.status, reservationId: vehicle.loadHold.reservationId }, after: { status: 'released' }, actor: command.actor, occurredAt: now, note: command.reason.trim() } satisfies AuditLog)
     transaction.objectStore(storeNames.idempotency).add(makeIdempotency(metadata.generationId, command.idempotencyKey, requestFingerprint, 'releaseVehicleLoadHold', payload, now, vehicle.vehicleId))
+    transaction.objectStore(storeNames.metadata).put({ ...metadata, lastUsedAt: now, updatedAt: now })
+    await done
+    return { kind: 'success', payload }
+  }
+
+  async acknowledgeDispatchReview(command: AcknowledgeDispatchReviewCommand): Promise<SaveResult> {
+    return this.executeSave(() => this.acknowledgeDispatchReviewUnsafe(command))
+  }
+
+  private async acknowledgeDispatchReviewUnsafe(command: AcknowledgeDispatchReviewCommand): Promise<SaveResult> {
+    const database = await this.getDatabase()
+    const requestFingerprint = fingerprint({ operation: 'acknowledgeDispatchReview', ...command })
+    const transaction = database.transaction(allStoreNames, 'readwrite')
+    const done = transactionDone(transaction)
+    const metadata = await this.getMetadata(transaction)
+    if (!isCurrentGeneration(metadata, command.generationId)) return abortSave(transaction, done, { kind: 'staleGeneration' })
+    const replay = await this.replayResult(transaction, command.generationId, command.idempotencyKey, requestFingerprint)
+    if (replay) return abortSave(transaction, done, replay)
+    if (command.actor !== 'demo-admin') return abortSave(transaction, done, { kind: 'invalidTransition' })
+
+    const reservation = await requestResult(transaction.objectStore(storeNames.reservations).get(command.reservationId)) as Reservation | undefined
+    if (!reservation) return abortSave(transaction, done, { kind: 'notFound' })
+    if (reservation.version !== command.expectedReservationVersion) return abortSave(transaction, done, { kind: 'versionConflict' })
+    if (reservation.status !== 'confirmed' || !categoryRequiresDispatch(reservation.categoryId)) {
+      return abortSave(transaction, done, { kind: 'reservationNotDispatchable' })
+    }
+    const assignmentStore = transaction.objectStore(storeNames.dispatchAssignments)
+    const current = await requestResult(assignmentStore.get(command.dispatchId)) as DispatchAssignment | undefined
+    if (!current || current.reservationId !== reservation.reservationId) return abortSave(transaction, done, { kind: 'notFound' })
+    if (current.version !== command.expectedDispatchVersion) return abortSave(transaction, done, { kind: 'dispatchVersionConflict' })
+    if (!isActiveDispatch(current) || !current.needsReview) return abortSave(transaction, done, { kind: 'invalidDispatchTransition' })
+    if (current.status === 'assigned' && current.plannedDate !== reservation.requestedDate) {
+      return abortSave(transaction, done, { kind: 'invalidDispatchTransition' })
+    }
+    const related = await requestResult(assignmentStore.index('byReservationId').getAll(reservation.reservationId)) as DispatchAssignment[]
+    if (related.some((item) => item.dispatchId !== current.dispatchId && isActiveDispatch(item))) {
+      return abortSave(transaction, done, { kind: 'activeDispatchExists' })
+    }
+
+    const now = this.now().toISOString()
+    const updated: DispatchAssignment = {
+      ...current,
+      reservationVersionAtLastReview: reservation.version,
+      reservationSnapshotAtLastReview: snapshotForDispatch(reservation),
+      needsReview: false,
+      updatedAt: now,
+      updatedBy: command.actor,
+      version: current.version + 1,
+    }
+    const payload: OperationResultPayload = { generationId: metadata.generationId, reservationId: reservation.reservationId, version: reservation.version, dispatchId: updated.dispatchId, dispatchVersion: updated.version, attemptNumber: updated.attemptNumber }
+    assignmentStore.put(updated)
+    transaction.objectStore(storeNames.auditLogs).add({
+      auditId: this.createId(), entityType: 'dispatch', entityId: updated.dispatchId, action: 'dispatchReviewAcknowledged',
+      before: { needsReview: true, reservationVersionAtLastReview: current.reservationVersionAtLastReview },
+      after: { needsReview: false, reservationVersionAtLastReview: reservation.version }, actor: command.actor, occurredAt: now,
+    } satisfies AuditLog)
+    transaction.objectStore(storeNames.idempotency).add(makeIdempotency(metadata.generationId, command.idempotencyKey, requestFingerprint, 'acknowledgeDispatchReview', payload, now, updated.dispatchId))
+    transaction.objectStore(storeNames.metadata).put({ ...metadata, lastUsedAt: now, updatedAt: now })
+    await done
+    return { kind: 'success', payload }
+  }
+
+  async addInternalNote(command: AddInternalNoteCommand): Promise<SaveResult> {
+    return this.executeSave(() => this.addInternalNoteUnsafe(command))
+  }
+
+  private async addInternalNoteUnsafe(command: AddInternalNoteCommand): Promise<SaveResult> {
+    const database = await this.getDatabase()
+    const requestFingerprint = fingerprint({ operation: 'addInternalNote', ...command })
+    const transaction = database.transaction(allStoreNames, 'readwrite')
+    const done = transactionDone(transaction)
+    const metadata = await this.getMetadata(transaction)
+    if (!isCurrentGeneration(metadata, command.generationId)) return abortSave(transaction, done, { kind: 'staleGeneration' })
+    const replay = await this.replayResult(transaction, command.generationId, command.idempotencyKey, requestFingerprint)
+    if (replay) return abortSave(transaction, done, replay)
+    if (command.actor !== 'demo-admin') return abortSave(transaction, done, { kind: 'invalidTransition' })
+    const errors = validateInternalNote(command.body)
+    if (errors.length > 0) return abortSave(transaction, done, { kind: 'validationError', errors })
+    const reservation = await requestResult(transaction.objectStore(storeNames.reservations).get(command.reservationId)) as Reservation | undefined
+    if (!reservation) return abortSave(transaction, done, { kind: 'notFound' })
+
+    const now = this.now().toISOString()
+    const note: InternalNote = { noteId: this.createId(), reservationId: reservation.reservationId, body: command.body.trim(), createdAt: now, createdBy: command.actor }
+    const payload: OperationResultPayload = { generationId: metadata.generationId, reservationId: reservation.reservationId, version: reservation.version, noteId: note.noteId }
+    transaction.objectStore(storeNames.internalNotes).add(note)
+    transaction.objectStore(storeNames.auditLogs).add({ auditId: this.createId(), entityType: 'internalNote', entityId: note.noteId, action: 'internalNoteAdded', after: { reservationId: reservation.reservationId }, actor: command.actor, occurredAt: now } satisfies AuditLog)
+    transaction.objectStore(storeNames.idempotency).add(makeIdempotency(metadata.generationId, command.idempotencyKey, requestFingerprint, 'addInternalNote', payload, now, note.noteId))
     transaction.objectStore(storeNames.metadata).put({ ...metadata, lastUsedAt: now, updatedAt: now })
     await done
     return { kind: 'success', payload }

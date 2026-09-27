@@ -67,3 +67,10 @@ export function validateVehicleHoldReason(reason: string, consultationNote?: str
   }
   return errors
 }
+
+export function validateInternalNote(body: string): ValidationError[] {
+  const length = body.trim().length
+  return length < 1 || length > 500
+    ? [{ field: 'body', code: 'invalidLength', message: '社内補足は1～500文字で入力してください。' }]
+    : []
+}
