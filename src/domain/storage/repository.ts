@@ -2,8 +2,8 @@ import { evaluateAvailability } from '../availability'
 import { categoryRequiresDispatch } from '../categories'
 import { todayInJapan } from '../dateRules'
 import { timeRangesOverlap } from '../dispatchRules'
-import { snapshotForDispatch, type DispatchAssignment, type Driver, type InternalNote, type Vehicle } from '../dispatchTypes'
-import { validateDispatchCancelReason, validateDispatchPlan, type DispatchPlanInput } from '../dispatchValidation'
+import { snapshotForDispatch, type CollectionOutcome, type DispatchAssignment, type Driver, type InternalNote, type Vehicle } from '../dispatchTypes'
+import { validateCollectionOutcome, validateDispatchCancelReason, validateDispatchPlan, validateVehicleHoldReason, type DispatchPlanInput } from '../dispatchValidation'
 import { initialStatus, canTransition } from '../statusRules'
 import type {
   Actor,
@@ -49,7 +49,7 @@ export type SaveResult =
   | { kind: 'validationError'; errors: ValidationError[] }
   | { kind: 'capacityFull' | 'closed' | 'zeroLimit' | 'invalidSetting' | 'dateUnavailable' }
   | { kind: 'versionConflict' | 'staleGeneration' | 'idempotencyConflict' | 'invalidTransition' | 'notFound' }
-  | { kind: 'activeDispatchExists' | 'reservationNotDispatchable' | 'vehicleUnavailable' | 'vehicleOnHold' | 'driverUnavailable' | 'dispatchVersionConflict' | 'invalidDispatchTransition' }
+  | { kind: 'activeDispatchExists' | 'reservationNotDispatchable' | 'vehicleUnavailable' | 'vehicleOnHold' | 'driverUnavailable' | 'dispatchVersionConflict' | 'invalidDispatchTransition' | 'reviewRequired' | 'invalidOutcome' | 'vehicleHoldConflict' | 'vehicleVersionConflict' }
   | { kind: 'vehicleScheduleConflict' | 'driverScheduleConflict'; conflictingDispatchId: string }
   | { kind: 'storageFull' | 'storageUnavailable'; message: string }
 
@@ -126,6 +126,53 @@ export type CancelDispatchCommand = {
   dispatchId: string
   expectedDispatchVersion: number
   cancelReason?: string
+}
+
+export type DispatchWorkCommand = {
+  generationId: string
+  idempotencyKey: string
+  actor: Actor
+  reservationId: string
+  expectedReservationVersion: number
+  dispatchId: string
+  expectedDispatchVersion: number
+}
+
+export type CompleteDispatchCommand = DispatchWorkCommand & {
+  outcome: CollectionOutcome
+  actualCollectionSummary?: string
+  outcomeNotes?: string
+  holdRequest?: { expectedVehicleVersion: number; reason: string; consultationNote?: string }
+}
+
+export type StartVehicleLoadHoldCommand = {
+  generationId: string
+  idempotencyKey: string
+  actor: Actor
+  vehicleId: string
+  expectedVehicleVersion: number
+  reservationId: string
+  dispatchId: string
+  reason: string
+  consultationNote?: string
+}
+
+export type ConfirmVehicleLoadHoldCommand = {
+  generationId: string
+  idempotencyKey: string
+  actor: Actor
+  vehicleId: string
+  expectedVehicleVersion: number
+  consultationNote: string
+}
+
+export type ReleaseVehicleLoadHoldCommand = {
+  generationId: string
+  idempotencyKey: string
+  actor: Actor
+  vehicleId: string
+  expectedVehicleVersion: number
+  reason: string
 }
 
 type RepositoryOptions = {
@@ -844,6 +891,255 @@ export class ReservationRepository {
       before: dispatchAuditValue(current), after: dispatchAuditValue(updated), actor: command.actor, occurredAt: now,
     } satisfies AuditLog)
     transaction.objectStore(storeNames.idempotency).add(makeIdempotency(metadata.generationId, command.idempotencyKey, requestFingerprint, 'cancelDispatch', payload, now, updated.dispatchId))
+    transaction.objectStore(storeNames.metadata).put({ ...metadata, lastUsedAt: now, updatedAt: now })
+    await done
+    return { kind: 'success', payload }
+  }
+
+  async startDispatch(command: DispatchWorkCommand): Promise<SaveResult> {
+    return this.executeSave(() => this.startDispatchUnsafe(command))
+  }
+
+  private async startDispatchUnsafe(command: DispatchWorkCommand): Promise<SaveResult> {
+    const database = await this.getDatabase()
+    const requestFingerprint = fingerprint({ operation: 'startDispatch', ...command })
+    const transaction = database.transaction(allStoreNames, 'readwrite')
+    const done = transactionDone(transaction)
+    const metadata = await this.getMetadata(transaction)
+    if (!isCurrentGeneration(metadata, command.generationId)) return abortSave(transaction, done, { kind: 'staleGeneration' })
+    const replay = await this.replayResult(transaction, command.generationId, command.idempotencyKey, requestFingerprint)
+    if (replay) return abortSave(transaction, done, replay)
+    const reservation = await requestResult(transaction.objectStore(storeNames.reservations).get(command.reservationId)) as Reservation | undefined
+    if (!reservation) return abortSave(transaction, done, { kind: 'notFound' })
+    if (reservation.version !== command.expectedReservationVersion) return abortSave(transaction, done, { kind: 'versionConflict' })
+    if (reservation.status !== 'confirmed' || !categoryRequiresDispatch(reservation.categoryId)) {
+      return abortSave(transaction, done, { kind: 'reservationNotDispatchable' })
+    }
+    const assignmentStore = transaction.objectStore(storeNames.dispatchAssignments)
+    const current = await requestResult(assignmentStore.get(command.dispatchId)) as DispatchAssignment | undefined
+    if (!current || current.reservationId !== reservation.reservationId) return abortSave(transaction, done, { kind: 'notFound' })
+    if (current.version !== command.expectedDispatchVersion) return abortSave(transaction, done, { kind: 'dispatchVersionConflict' })
+    if (current.status !== 'assigned') return abortSave(transaction, done, { kind: 'invalidDispatchTransition' })
+    if (current.needsReview) return abortSave(transaction, done, { kind: 'reviewRequired' })
+    const related = await requestResult(assignmentStore.index('byReservationId').getAll(reservation.reservationId)) as DispatchAssignment[]
+    if (related.some((item) => item.dispatchId !== current.dispatchId && isActiveDispatch(item))) {
+      return abortSave(transaction, done, { kind: 'activeDispatchExists' })
+    }
+    const vehicle = await requestResult(transaction.objectStore(storeNames.vehicles).get(current.vehicleId)) as Vehicle | undefined
+    if (!vehicle) return abortSave(transaction, done, { kind: 'vehicleUnavailable' })
+    if (vehicle.loadHold) return abortSave(transaction, done, { kind: 'vehicleOnHold' })
+
+    const now = this.now().toISOString()
+    const updated: DispatchAssignment = { ...current, status: 'inProgress', startedAt: now, startedBy: command.actor, updatedAt: now, updatedBy: command.actor, version: current.version + 1 }
+    const payload: OperationResultPayload = { generationId: metadata.generationId, reservationId: reservation.reservationId, dispatchId: updated.dispatchId, dispatchVersion: updated.version, attemptNumber: updated.attemptNumber }
+    assignmentStore.put(updated)
+    transaction.objectStore(storeNames.auditLogs).add({ auditId: this.createId(), entityType: 'dispatch', entityId: updated.dispatchId, action: 'dispatchStarted', before: { status: current.status }, after: { status: updated.status }, actor: command.actor, occurredAt: now } satisfies AuditLog)
+    transaction.objectStore(storeNames.idempotency).add(makeIdempotency(metadata.generationId, command.idempotencyKey, requestFingerprint, 'startDispatch', payload, now, updated.dispatchId))
+    transaction.objectStore(storeNames.metadata).put({ ...metadata, lastUsedAt: now, updatedAt: now })
+    await done
+    return { kind: 'success', payload }
+  }
+
+  async completeDispatch(command: CompleteDispatchCommand): Promise<SaveResult> {
+    return this.executeSave(() => this.completeDispatchUnsafe(command))
+  }
+
+  private async completeDispatchUnsafe(command: CompleteDispatchCommand): Promise<SaveResult> {
+    const database = await this.getDatabase()
+    const requestFingerprint = fingerprint({ operation: 'completeDispatch', ...command })
+    const transaction = database.transaction(allStoreNames, 'readwrite')
+    const done = transactionDone(transaction)
+    const metadata = await this.getMetadata(transaction)
+    if (!isCurrentGeneration(metadata, command.generationId)) return abortSave(transaction, done, { kind: 'staleGeneration' })
+    const replay = await this.replayResult(transaction, command.generationId, command.idempotencyKey, requestFingerprint)
+    if (replay) return abortSave(transaction, done, replay)
+    const reservationStore = transaction.objectStore(storeNames.reservations)
+    const reservation = await requestResult(reservationStore.get(command.reservationId)) as Reservation | undefined
+    if (!reservation) return abortSave(transaction, done, { kind: 'notFound' })
+    if (reservation.version !== command.expectedReservationVersion) return abortSave(transaction, done, { kind: 'versionConflict' })
+    if (reservation.status !== 'confirmed' || !categoryRequiresDispatch(reservation.categoryId)) {
+      return abortSave(transaction, done, { kind: 'reservationNotDispatchable' })
+    }
+    const assignmentStore = transaction.objectStore(storeNames.dispatchAssignments)
+    const current = await requestResult(assignmentStore.get(command.dispatchId)) as DispatchAssignment | undefined
+    if (!current || current.reservationId !== reservation.reservationId) return abortSave(transaction, done, { kind: 'notFound' })
+    if (current.version !== command.expectedDispatchVersion) return abortSave(transaction, done, { kind: 'dispatchVersionConflict' })
+    if (current.status !== 'assigned' && current.status !== 'inProgress') return abortSave(transaction, done, { kind: 'invalidDispatchTransition' })
+    if (current.status === 'assigned' && current.needsReview) return abortSave(transaction, done, { kind: 'reviewRequired' })
+    const related = await requestResult(assignmentStore.index('byReservationId').getAll(reservation.reservationId)) as DispatchAssignment[]
+    if (related.some((item) => item.dispatchId !== current.dispatchId && isActiveDispatch(item))) {
+      return abortSave(transaction, done, { kind: 'activeDispatchExists' })
+    }
+    const outcomeErrors = validateCollectionOutcome(command.outcome, command.actualCollectionSummary, command.outcomeNotes)
+    if (outcomeErrors.some((error) => error.field === 'outcome')) return abortSave(transaction, done, { kind: 'invalidOutcome' })
+    if (outcomeErrors.length > 0) return abortSave(transaction, done, { kind: 'validationError', errors: outcomeErrors })
+    if (command.holdRequest && (command.actor !== 'demo-admin' || command.outcome === 'notCollected')) {
+      return abortSave(transaction, done, { kind: 'invalidOutcome' })
+    }
+    if (command.holdRequest) {
+      const holdErrors = validateVehicleHoldReason(command.holdRequest.reason, command.holdRequest.consultationNote)
+      if (holdErrors.length > 0) return abortSave(transaction, done, { kind: 'validationError', errors: holdErrors })
+    }
+    const vehicleStore = transaction.objectStore(storeNames.vehicles)
+    const vehicle = await requestResult(vehicleStore.get(current.vehicleId)) as Vehicle | undefined
+    if (!vehicle) return abortSave(transaction, done, { kind: 'vehicleUnavailable' })
+    if (vehicle.loadHold) return abortSave(transaction, done, { kind: 'vehicleOnHold' })
+    if (command.holdRequest && vehicle.version !== command.holdRequest.expectedVehicleVersion) {
+      return abortSave(transaction, done, { kind: 'vehicleVersionConflict' })
+    }
+
+    const now = this.now().toISOString()
+    const updated: DispatchAssignment = {
+      ...current,
+      status: 'completed',
+      completedAt: now,
+      completedBy: command.actor,
+      outcome: command.outcome,
+      actualCollectionSummary: command.actualCollectionSummary?.trim() || undefined,
+      outcomeNotes: command.outcomeNotes?.trim() || undefined,
+      updatedAt: now,
+      updatedBy: command.actor,
+      version: current.version + 1,
+    }
+    const completedReservation: Reservation | undefined = command.outcome === 'allCollected'
+      ? { ...reservation, status: 'completed', completedAt: now, completedBy: command.actor, updatedAt: now, version: reservation.version + 1 }
+      : undefined
+    const updatedVehicle: Vehicle | undefined = command.holdRequest
+      ? { ...vehicle, loadHold: { status: 'decisionPending', reservationId: reservation.reservationId, dispatchId: current.dispatchId, reason: command.holdRequest.reason.trim(), consultationNote: command.holdRequest.consultationNote?.trim() ?? '', startedAt: now, startedBy: command.actor }, version: vehicle.version + 1 }
+      : undefined
+    const payload: OperationResultPayload = {
+      generationId: metadata.generationId,
+      reservationId: reservation.reservationId,
+      version: completedReservation?.version ?? reservation.version,
+      dispatchId: updated.dispatchId,
+      dispatchVersion: updated.version,
+      attemptNumber: updated.attemptNumber,
+      vehicleId: updatedVehicle?.vehicleId,
+      vehicleVersion: updatedVehicle?.version,
+    }
+    assignmentStore.put(updated)
+    if (completedReservation) reservationStore.put(completedReservation)
+    if (updatedVehicle) vehicleStore.put(updatedVehicle)
+    const auditStore = transaction.objectStore(storeNames.auditLogs)
+    auditStore.add({ auditId: this.createId(), entityType: 'dispatch', entityId: updated.dispatchId, action: 'dispatchCompleted', before: { status: current.status }, after: { status: updated.status, outcome: updated.outcome }, actor: command.actor, occurredAt: now } satisfies AuditLog)
+    if (completedReservation) auditStore.add({ auditId: this.createId(), entityType: 'reservation', entityId: reservation.reservationId, action: 'completed', before: { status: reservation.status }, after: { status: 'completed' }, actor: command.actor, occurredAt: now } satisfies AuditLog)
+    if (updatedVehicle) auditStore.add({ auditId: this.createId(), entityType: 'vehicle', entityId: vehicle.vehicleId, action: 'loadHoldStarted', after: { status: 'decisionPending', reservationId: reservation.reservationId, dispatchId: current.dispatchId }, actor: command.actor, occurredAt: now } satisfies AuditLog)
+    transaction.objectStore(storeNames.idempotency).add(makeIdempotency(metadata.generationId, command.idempotencyKey, requestFingerprint, 'completeDispatch', payload, now, updated.dispatchId))
+    transaction.objectStore(storeNames.metadata).put({ ...metadata, lastUsedAt: now, updatedAt: now })
+    await done
+    return { kind: 'success', payload }
+  }
+
+  async startVehicleLoadHold(command: StartVehicleLoadHoldCommand): Promise<SaveResult> {
+    return this.executeSave(() => this.startVehicleLoadHoldUnsafe(command))
+  }
+
+  private async startVehicleLoadHoldUnsafe(command: StartVehicleLoadHoldCommand): Promise<SaveResult> {
+    const database = await this.getDatabase()
+    const requestFingerprint = fingerprint({ operation: 'startVehicleLoadHold', ...command })
+    const transaction = database.transaction(allStoreNames, 'readwrite')
+    const done = transactionDone(transaction)
+    const metadata = await this.getMetadata(transaction)
+    if (!isCurrentGeneration(metadata, command.generationId)) return abortSave(transaction, done, { kind: 'staleGeneration' })
+    const replay = await this.replayResult(transaction, command.generationId, command.idempotencyKey, requestFingerprint)
+    if (replay) return abortSave(transaction, done, replay)
+    if (command.actor !== 'demo-admin') return abortSave(transaction, done, { kind: 'invalidTransition' })
+    const errors = validateVehicleHoldReason(command.reason, command.consultationNote)
+    if (errors.length > 0) return abortSave(transaction, done, { kind: 'validationError', errors })
+
+    const assignment = await requestResult(transaction.objectStore(storeNames.dispatchAssignments).get(command.dispatchId)) as DispatchAssignment | undefined
+    if (!assignment || assignment.reservationId !== command.reservationId || assignment.vehicleId !== command.vehicleId) {
+      return abortSave(transaction, done, { kind: 'notFound' })
+    }
+    if (assignment.status !== 'completed' || (assignment.outcome !== 'allCollected' && assignment.outcome !== 'partiallyCollected')) {
+      return abortSave(transaction, done, { kind: 'invalidDispatchTransition' })
+    }
+    const reservation = await requestResult(transaction.objectStore(storeNames.reservations).get(command.reservationId)) as Reservation | undefined
+    if (!reservation) return abortSave(transaction, done, { kind: 'notFound' })
+    const vehicleStore = transaction.objectStore(storeNames.vehicles)
+    const vehicle = await requestResult(vehicleStore.get(command.vehicleId)) as Vehicle | undefined
+    if (!vehicle) return abortSave(transaction, done, { kind: 'vehicleUnavailable' })
+    if (vehicle.version !== command.expectedVehicleVersion) return abortSave(transaction, done, { kind: 'vehicleVersionConflict' })
+    if (vehicle.loadHold) return abortSave(transaction, done, { kind: 'vehicleHoldConflict' })
+
+    const now = this.now().toISOString()
+    const updated: Vehicle = {
+      ...vehicle,
+      loadHold: { status: 'decisionPending', reservationId: command.reservationId, dispatchId: command.dispatchId, reason: command.reason.trim(), consultationNote: command.consultationNote?.trim() ?? '', startedAt: now, startedBy: command.actor },
+      version: vehicle.version + 1,
+    }
+    const payload: OperationResultPayload = { generationId: metadata.generationId, reservationId: command.reservationId, dispatchId: command.dispatchId, vehicleId: vehicle.vehicleId, vehicleVersion: updated.version }
+    vehicleStore.put(updated)
+    transaction.objectStore(storeNames.auditLogs).add({ auditId: this.createId(), entityType: 'vehicle', entityId: vehicle.vehicleId, action: 'loadHoldStarted', after: { status: 'decisionPending', reservationId: command.reservationId, dispatchId: command.dispatchId }, actor: command.actor, occurredAt: now } satisfies AuditLog)
+    transaction.objectStore(storeNames.idempotency).add(makeIdempotency(metadata.generationId, command.idempotencyKey, requestFingerprint, 'startVehicleLoadHold', payload, now, vehicle.vehicleId))
+    transaction.objectStore(storeNames.metadata).put({ ...metadata, lastUsedAt: now, updatedAt: now })
+    await done
+    return { kind: 'success', payload }
+  }
+
+  async confirmVehicleLoadHold(command: ConfirmVehicleLoadHoldCommand): Promise<SaveResult> {
+    return this.executeSave(() => this.confirmVehicleLoadHoldUnsafe(command))
+  }
+
+  private async confirmVehicleLoadHoldUnsafe(command: ConfirmVehicleLoadHoldCommand): Promise<SaveResult> {
+    const database = await this.getDatabase()
+    const requestFingerprint = fingerprint({ operation: 'confirmVehicleLoadHold', ...command })
+    const transaction = database.transaction(allStoreNames, 'readwrite')
+    const done = transactionDone(transaction)
+    const metadata = await this.getMetadata(transaction)
+    if (!isCurrentGeneration(metadata, command.generationId)) return abortSave(transaction, done, { kind: 'staleGeneration' })
+    const replay = await this.replayResult(transaction, command.generationId, command.idempotencyKey, requestFingerprint)
+    if (replay) return abortSave(transaction, done, replay)
+    if (command.actor !== 'demo-admin') return abortSave(transaction, done, { kind: 'invalidTransition' })
+    if (!command.consultationNote.trim() || command.consultationNote.trim().length > 500) {
+      return abortSave(transaction, done, { kind: 'validationError', errors: [{ field: 'consultationNote', code: 'invalidLength', message: '電話相談の判断内容を500文字以内で入力してください。' }] })
+    }
+    const vehicleStore = transaction.objectStore(storeNames.vehicles)
+    const vehicle = await requestResult(vehicleStore.get(command.vehicleId)) as Vehicle | undefined
+    if (!vehicle) return abortSave(transaction, done, { kind: 'vehicleUnavailable' })
+    if (vehicle.version !== command.expectedVehicleVersion) return abortSave(transaction, done, { kind: 'vehicleVersionConflict' })
+    if (vehicle.loadHold?.status !== 'decisionPending') return abortSave(transaction, done, { kind: 'vehicleHoldConflict' })
+
+    const now = this.now().toISOString()
+    const updated: Vehicle = { ...vehicle, loadHold: { ...vehicle.loadHold, status: 'storedOnVehicle', consultationNote: command.consultationNote.trim() }, version: vehicle.version + 1 }
+    const payload: OperationResultPayload = { generationId: metadata.generationId, reservationId: updated.loadHold?.reservationId, dispatchId: updated.loadHold?.dispatchId, vehicleId: vehicle.vehicleId, vehicleVersion: updated.version }
+    vehicleStore.put(updated)
+    transaction.objectStore(storeNames.auditLogs).add({ auditId: this.createId(), entityType: 'vehicle', entityId: vehicle.vehicleId, action: 'loadHoldConfirmed', before: { status: 'decisionPending' }, after: { status: 'storedOnVehicle', reservationId: updated.loadHold?.reservationId }, actor: command.actor, occurredAt: now } satisfies AuditLog)
+    transaction.objectStore(storeNames.idempotency).add(makeIdempotency(metadata.generationId, command.idempotencyKey, requestFingerprint, 'confirmVehicleLoadHold', payload, now, vehicle.vehicleId))
+    transaction.objectStore(storeNames.metadata).put({ ...metadata, lastUsedAt: now, updatedAt: now })
+    await done
+    return { kind: 'success', payload }
+  }
+
+  async releaseVehicleLoadHold(command: ReleaseVehicleLoadHoldCommand): Promise<SaveResult> {
+    return this.executeSave(() => this.releaseVehicleLoadHoldUnsafe(command))
+  }
+
+  private async releaseVehicleLoadHoldUnsafe(command: ReleaseVehicleLoadHoldCommand): Promise<SaveResult> {
+    const database = await this.getDatabase()
+    const requestFingerprint = fingerprint({ operation: 'releaseVehicleLoadHold', ...command })
+    const transaction = database.transaction(allStoreNames, 'readwrite')
+    const done = transactionDone(transaction)
+    const metadata = await this.getMetadata(transaction)
+    if (!isCurrentGeneration(metadata, command.generationId)) return abortSave(transaction, done, { kind: 'staleGeneration' })
+    const replay = await this.replayResult(transaction, command.generationId, command.idempotencyKey, requestFingerprint)
+    if (replay) return abortSave(transaction, done, replay)
+    if (command.actor !== 'demo-admin') return abortSave(transaction, done, { kind: 'invalidTransition' })
+    if (!command.reason.trim() || command.reason.trim().length > 500) {
+      return abortSave(transaction, done, { kind: 'validationError', errors: [{ field: 'releaseReason', code: 'invalidLength', message: '積載解消の理由を500文字以内で入力してください。' }] })
+    }
+    const vehicleStore = transaction.objectStore(storeNames.vehicles)
+    const vehicle = await requestResult(vehicleStore.get(command.vehicleId)) as Vehicle | undefined
+    if (!vehicle) return abortSave(transaction, done, { kind: 'vehicleUnavailable' })
+    if (vehicle.version !== command.expectedVehicleVersion) return abortSave(transaction, done, { kind: 'vehicleVersionConflict' })
+    if (!vehicle.loadHold) return abortSave(transaction, done, { kind: 'vehicleHoldConflict' })
+
+    const now = this.now().toISOString()
+    const updated: Vehicle = { ...vehicle, loadHold: undefined, version: vehicle.version + 1 }
+    const payload: OperationResultPayload = { generationId: metadata.generationId, reservationId: vehicle.loadHold.reservationId, dispatchId: vehicle.loadHold.dispatchId, vehicleId: vehicle.vehicleId, vehicleVersion: updated.version }
+    vehicleStore.put(updated)
+    transaction.objectStore(storeNames.auditLogs).add({ auditId: this.createId(), entityType: 'vehicle', entityId: vehicle.vehicleId, action: 'loadHoldReleased', before: { status: vehicle.loadHold.status, reservationId: vehicle.loadHold.reservationId }, after: { status: 'released' }, actor: command.actor, occurredAt: now, note: command.reason.trim() } satisfies AuditLog)
+    transaction.objectStore(storeNames.idempotency).add(makeIdempotency(metadata.generationId, command.idempotencyKey, requestFingerprint, 'releaseVehicleLoadHold', payload, now, vehicle.vehicleId))
     transaction.objectStore(storeNames.metadata).put({ ...metadata, lastUsedAt: now, updatedAt: now })
     await done
     return { kind: 'success', payload }
