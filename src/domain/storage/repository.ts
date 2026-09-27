@@ -1,6 +1,9 @@
 import { evaluateAvailability } from '../availability'
+import { categoryRequiresDispatch } from '../categories'
 import { todayInJapan } from '../dateRules'
-import type { DispatchAssignment, Driver, InternalNote, Vehicle } from '../dispatchTypes'
+import { timeRangesOverlap } from '../dispatchRules'
+import { snapshotForDispatch, type DispatchAssignment, type Driver, type InternalNote, type Vehicle } from '../dispatchTypes'
+import { validateDispatchCancelReason, validateDispatchPlan, type DispatchPlanInput } from '../dispatchValidation'
 import { initialStatus, canTransition } from '../statusRules'
 import type {
   Actor,
@@ -14,6 +17,7 @@ import type {
   Reservation,
   ReservationInput,
   ReservationStatus,
+  ValidationError,
 } from '../types'
 import { normalizePhoneNumber, validateReservationInput } from '../validation'
 import { fingerprint } from './fingerprint'
@@ -42,9 +46,11 @@ export type InitializationResult = {
 
 export type SaveResult =
   | { kind: 'success' | 'duplicateSuccess'; payload: OperationResultPayload }
-  | { kind: 'validationError'; errors: ReturnType<typeof validateReservationInput> }
+  | { kind: 'validationError'; errors: ValidationError[] }
   | { kind: 'capacityFull' | 'closed' | 'zeroLimit' | 'invalidSetting' | 'dateUnavailable' }
   | { kind: 'versionConflict' | 'staleGeneration' | 'idempotencyConflict' | 'invalidTransition' | 'notFound' }
+  | { kind: 'activeDispatchExists' | 'reservationNotDispatchable' | 'vehicleUnavailable' | 'vehicleOnHold' | 'driverUnavailable' | 'dispatchVersionConflict' | 'invalidDispatchTransition' }
+  | { kind: 'vehicleScheduleConflict' | 'driverScheduleConflict'; conflictingDispatchId: string }
   | { kind: 'storageFull' | 'storageUnavailable'; message: string }
 
 export type CreateReservationCommand = {
@@ -96,6 +102,30 @@ export type SetClosureCommand = {
   categoryId: Reservation['categoryId']
   expectedVersion?: number
   isClosed: boolean
+}
+
+export type CreateDispatchCommand = DispatchPlanInput & {
+  generationId: string
+  idempotencyKey: string
+  actor: Actor
+  reservationId: string
+  expectedReservationVersion: number
+}
+
+export type UpdateDispatchCommand = CreateDispatchCommand & {
+  dispatchId: string
+  expectedDispatchVersion: number
+}
+
+export type CancelDispatchCommand = {
+  generationId: string
+  idempotencyKey: string
+  actor: Actor
+  reservationId: string
+  expectedReservationVersion: number
+  dispatchId: string
+  expectedDispatchVersion: number
+  cancelReason?: string
 }
 
 type RepositoryOptions = {
@@ -421,6 +451,17 @@ export class ReservationRepository {
       await ignoreAbort(done)
       return { kind: 'invalidTransition' }
     }
+    if (command.nextStatus === 'completed' && categoryRequiresDispatch(reservation.categoryId)) {
+      return abortSave(transaction, done, { kind: 'invalidTransition' })
+    }
+    const assignmentStore = transaction.objectStore(storeNames.dispatchAssignments)
+    const assignments = command.nextStatus === 'cancelled'
+      ? await requestResult(assignmentStore.index('byReservationId').getAll(reservation.reservationId)) as DispatchAssignment[]
+      : []
+    const activeAssignments = assignments.filter(isActiveDispatch)
+    if (activeAssignments.length > 1 || activeAssignments.some((item) => item.status === 'inProgress')) {
+      return abortSave(transaction, done, { kind: 'invalidTransition' })
+    }
 
     const now = this.now().toISOString()
     const beforeStatus = reservation.status
@@ -442,6 +483,8 @@ export class ReservationRepository {
       reservationCode: updated.reservationCode,
       version: updated.version,
       generationId: metadata.generationId,
+      dispatchId: activeAssignments[0]?.dispatchId,
+      dispatchVersion: activeAssignments[0] ? activeAssignments[0].version + 1 : undefined,
     }
     const idempotency: IdempotencyRecord = {
       generationId: metadata.generationId,
@@ -467,6 +510,24 @@ export class ReservationRepository {
 
     store.put(updated)
     transaction.objectStore(storeNames.auditLogs).add(audit)
+    if (command.nextStatus === 'cancelled' && activeAssignments.length === 1) {
+      const currentAssignment = activeAssignments[0]
+      const cancelledAssignment: DispatchAssignment = {
+        ...currentAssignment,
+        status: 'cancelled',
+        cancelledAt: now,
+        cancelledBy: command.actor,
+        cancelReason: command.cancelReason?.trim() || undefined,
+        updatedAt: now,
+        updatedBy: command.actor,
+        version: currentAssignment.version + 1,
+      }
+      assignmentStore.put(cancelledAssignment)
+      transaction.objectStore(storeNames.auditLogs).add({
+        auditId: this.createId(), entityType: 'dispatch', entityId: cancelledAssignment.dispatchId, action: 'dispatchCancelled',
+        before: dispatchAuditValue(currentAssignment), after: dispatchAuditValue(cancelledAssignment), actor: command.actor, occurredAt: now,
+      } satisfies AuditLog)
+    }
     transaction.objectStore(storeNames.idempotency).add(idempotency)
     transaction.objectStore(storeNames.metadata).put({ ...metadata, lastUsedAt: now, updatedAt: now })
     await done
@@ -496,6 +557,7 @@ export class ReservationRepository {
     if (!current) return abortResult(transaction, done, 'notFound')
     if (current.version !== command.expectedVersion) return abortResult(transaction, done, 'versionConflict')
     if (current.status === 'completed' || current.status === 'cancelled') return abortResult(transaction, done, 'invalidTransition')
+    if (current.categoryId !== command.input.categoryId) return abortResult(transaction, done, 'invalidTransition')
 
     const errors = validateReservationInput(command.input, { channel: 'admin', today: this.today() })
     const dateOrCategoryChanged = current.requestedDate !== command.input.requestedDate || current.categoryId !== command.input.categoryId
@@ -535,8 +597,22 @@ export class ReservationRepository {
       version: current.version + 1,
     }
     const payload: OperationResultPayload = { reservationId: updated.reservationId, reservationCode: updated.reservationCode, version: updated.version, generationId: metadata.generationId }
+    const assignmentStore = transaction.objectStore(storeNames.dispatchAssignments)
+    const assignments = await requestResult(assignmentStore.index('byReservationId').getAll(current.reservationId)) as DispatchAssignment[]
+    const activeAssignments = assignments.filter(isActiveDispatch)
+    if (activeAssignments.length > 1) return abortResult(transaction, done, 'invalidTransition')
+    const importantChanged = fingerprint(snapshotForDispatch(current)) !== fingerprint(snapshotForDispatch(updated))
     store.put(updated)
     transaction.objectStore(storeNames.auditLogs).add({ auditId: this.createId(), entityType: 'reservation', entityId: updated.reservationId, action: 'updated', before: reservationAuditValue(current), after: reservationAuditValue(updated), actor: command.actor, occurredAt: now } satisfies AuditLog)
+    if (importantChanged && activeAssignments.length === 1) {
+      const assignment = activeAssignments[0]
+      assignmentStore.put({ ...assignment, needsReview: true, updatedAt: now, updatedBy: command.actor, version: assignment.version + 1 } satisfies DispatchAssignment)
+      transaction.objectStore(storeNames.auditLogs).add({
+        auditId: this.createId(), entityType: 'dispatch', entityId: assignment.dispatchId, action: 'dispatchReviewRequired',
+        before: { needsReview: assignment.needsReview, reservationVersion: current.version },
+        after: { needsReview: true, reservationVersion: updated.version }, actor: command.actor, occurredAt: now,
+      } satisfies AuditLog)
+    }
     transaction.objectStore(storeNames.idempotency).add(makeIdempotency(metadata.generationId, command.idempotencyKey, requestFingerprint, 'updateReservation', payload, now, updated.reservationId))
     transaction.objectStore(storeNames.metadata).put({ ...metadata, lastUsedAt: now, updatedAt: now })
     await done
@@ -598,6 +674,197 @@ export class ReservationRepository {
     transaction.objectStore(storeNames.metadata).put({ ...metadata, lastUsedAt: now, updatedAt: now })
     await done
     return { kind: 'success', payload }
+  }
+
+  async createDispatch(command: CreateDispatchCommand): Promise<SaveResult> {
+    return this.executeSave(() => this.createDispatchUnsafe(command))
+  }
+
+  private async createDispatchUnsafe(command: CreateDispatchCommand): Promise<SaveResult> {
+    const database = await this.getDatabase()
+    const requestFingerprint = fingerprint({ operation: 'createDispatch', ...command })
+    const transaction = database.transaction(allStoreNames, 'readwrite')
+    const done = transactionDone(transaction)
+    const metadata = await this.getMetadata(transaction)
+    if (!isCurrentGeneration(metadata, command.generationId)) return abortSave(transaction, done, { kind: 'staleGeneration' })
+    const replay = await this.replayResult(transaction, command.generationId, command.idempotencyKey, requestFingerprint)
+    if (replay) return abortSave(transaction, done, replay)
+
+    const reservation = await requestResult(transaction.objectStore(storeNames.reservations).get(command.reservationId)) as Reservation | undefined
+    if (!reservation) return abortSave(transaction, done, { kind: 'notFound' })
+    if (reservation.version !== command.expectedReservationVersion) return abortSave(transaction, done, { kind: 'versionConflict' })
+    if (reservation.status !== 'confirmed' || !categoryRequiresDispatch(reservation.categoryId)) {
+      return abortSave(transaction, done, { kind: 'reservationNotDispatchable' })
+    }
+    const assignmentStore = transaction.objectStore(storeNames.dispatchAssignments)
+    const previous = await requestResult(assignmentStore.index('byReservationId').getAll(command.reservationId)) as DispatchAssignment[]
+    if (previous.some((item) => item.status === 'assigned' || item.status === 'inProgress')) {
+      return abortSave(transaction, done, { kind: 'activeDispatchExists' })
+    }
+    if (!previous.some((item) => item.status === 'completed') && command.plannedDate !== reservation.requestedDate) {
+      return abortSave(transaction, done, { kind: 'validationError', errors: [{ field: 'plannedDate', code: 'initialDateMismatch', message: '初回の配車予定日は予約日と一致させてください。' }] })
+    }
+    const planError = await this.checkDispatchPlan(transaction, command)
+    if (planError) return abortSave(transaction, done, planError)
+
+    const now = this.now().toISOString()
+    const dispatchId = this.createId()
+    const attemptNumber = Math.max(0, ...previous.map((item) => item.attemptNumber)) + 1
+    const snapshot = snapshotForDispatch(reservation)
+    const assignment: DispatchAssignment = {
+      dispatchId,
+      reservationId: reservation.reservationId,
+      attemptNumber,
+      plannedDate: command.plannedDate,
+      plannedStartTime: command.plannedStartTime,
+      plannedEndTime: command.plannedEndTime,
+      vehicleId: command.vehicleId,
+      primaryDriverId: command.primaryDriverId,
+      status: 'assigned',
+      reservationVersionAtAssignment: reservation.version,
+      reservationSnapshotAtAssignment: snapshot,
+      reservationVersionAtLastReview: reservation.version,
+      reservationSnapshotAtLastReview: structuredClone(snapshot),
+      needsReview: false,
+      driverInstructions: command.driverInstructions?.trim() || undefined,
+      createdAt: now,
+      createdBy: command.actor,
+      updatedAt: now,
+      updatedBy: command.actor,
+      version: 1,
+    }
+    const payload: OperationResultPayload = { generationId: metadata.generationId, reservationId: reservation.reservationId, dispatchId, dispatchVersion: 1, attemptNumber }
+    assignmentStore.add(assignment)
+    transaction.objectStore(storeNames.auditLogs).add({
+      auditId: this.createId(), entityType: 'dispatch', entityId: dispatchId, action: 'dispatchCreated',
+      after: dispatchAuditValue(assignment), actor: command.actor, occurredAt: now,
+    } satisfies AuditLog)
+    transaction.objectStore(storeNames.idempotency).add(makeIdempotency(metadata.generationId, command.idempotencyKey, requestFingerprint, 'createDispatch', payload, now, dispatchId))
+    transaction.objectStore(storeNames.metadata).put({ ...metadata, lastUsedAt: now, updatedAt: now })
+    await done
+    return { kind: 'success', payload }
+  }
+
+  async updateDispatch(command: UpdateDispatchCommand): Promise<SaveResult> {
+    return this.executeSave(() => this.updateDispatchUnsafe(command))
+  }
+
+  private async updateDispatchUnsafe(command: UpdateDispatchCommand): Promise<SaveResult> {
+    const database = await this.getDatabase()
+    const requestFingerprint = fingerprint({ operation: 'updateDispatch', ...command })
+    const transaction = database.transaction(allStoreNames, 'readwrite')
+    const done = transactionDone(transaction)
+    const metadata = await this.getMetadata(transaction)
+    if (!isCurrentGeneration(metadata, command.generationId)) return abortSave(transaction, done, { kind: 'staleGeneration' })
+    const replay = await this.replayResult(transaction, command.generationId, command.idempotencyKey, requestFingerprint)
+    if (replay) return abortSave(transaction, done, replay)
+
+    const reservation = await requestResult(transaction.objectStore(storeNames.reservations).get(command.reservationId)) as Reservation | undefined
+    if (!reservation) return abortSave(transaction, done, { kind: 'notFound' })
+    if (reservation.version !== command.expectedReservationVersion) return abortSave(transaction, done, { kind: 'versionConflict' })
+    if (reservation.status !== 'confirmed' || !categoryRequiresDispatch(reservation.categoryId)) {
+      return abortSave(transaction, done, { kind: 'reservationNotDispatchable' })
+    }
+    const assignmentStore = transaction.objectStore(storeNames.dispatchAssignments)
+    const current = await requestResult(assignmentStore.get(command.dispatchId)) as DispatchAssignment | undefined
+    if (!current || current.reservationId !== reservation.reservationId) return abortSave(transaction, done, { kind: 'notFound' })
+    if (current.version !== command.expectedDispatchVersion) return abortSave(transaction, done, { kind: 'dispatchVersionConflict' })
+    if (current.status !== 'assigned') return abortSave(transaction, done, { kind: 'invalidDispatchTransition' })
+    const previous = await requestResult(assignmentStore.index('byReservationId').getAll(command.reservationId)) as DispatchAssignment[]
+    if (previous.some((item) => item.dispatchId !== current.dispatchId && isActiveDispatch(item))) {
+      return abortSave(transaction, done, { kind: 'activeDispatchExists' })
+    }
+    if (!previous.some((item) => item.status === 'completed') && command.plannedDate !== reservation.requestedDate) {
+      return abortSave(transaction, done, { kind: 'validationError', errors: [{ field: 'plannedDate', code: 'initialDateMismatch', message: '初回の配車予定日は予約日と一致させてください。' }] })
+    }
+    const planError = await this.checkDispatchPlan(transaction, command, current.dispatchId)
+    if (planError) return abortSave(transaction, done, planError)
+
+    const now = this.now().toISOString()
+    const updated: DispatchAssignment = {
+      ...current,
+      plannedDate: command.plannedDate,
+      plannedStartTime: command.plannedStartTime,
+      plannedEndTime: command.plannedEndTime,
+      vehicleId: command.vehicleId,
+      primaryDriverId: command.primaryDriverId,
+      driverInstructions: command.driverInstructions?.trim() || undefined,
+      updatedAt: now,
+      updatedBy: command.actor,
+      version: current.version + 1,
+    }
+    const payload: OperationResultPayload = { generationId: metadata.generationId, reservationId: reservation.reservationId, dispatchId: updated.dispatchId, dispatchVersion: updated.version, attemptNumber: updated.attemptNumber }
+    assignmentStore.put(updated)
+    transaction.objectStore(storeNames.auditLogs).add({
+      auditId: this.createId(), entityType: 'dispatch', entityId: updated.dispatchId, action: 'dispatchUpdated',
+      before: dispatchAuditValue(current), after: dispatchAuditValue(updated), actor: command.actor, occurredAt: now,
+    } satisfies AuditLog)
+    transaction.objectStore(storeNames.idempotency).add(makeIdempotency(metadata.generationId, command.idempotencyKey, requestFingerprint, 'updateDispatch', payload, now, updated.dispatchId))
+    transaction.objectStore(storeNames.metadata).put({ ...metadata, lastUsedAt: now, updatedAt: now })
+    await done
+    return { kind: 'success', payload }
+  }
+
+  async cancelDispatch(command: CancelDispatchCommand): Promise<SaveResult> {
+    return this.executeSave(() => this.cancelDispatchUnsafe(command))
+  }
+
+  private async cancelDispatchUnsafe(command: CancelDispatchCommand): Promise<SaveResult> {
+    const database = await this.getDatabase()
+    const requestFingerprint = fingerprint({ operation: 'cancelDispatch', ...command })
+    const transaction = database.transaction(allStoreNames, 'readwrite')
+    const done = transactionDone(transaction)
+    const metadata = await this.getMetadata(transaction)
+    if (!isCurrentGeneration(metadata, command.generationId)) return abortSave(transaction, done, { kind: 'staleGeneration' })
+    const replay = await this.replayResult(transaction, command.generationId, command.idempotencyKey, requestFingerprint)
+    if (replay) return abortSave(transaction, done, replay)
+    const reasonErrors = validateDispatchCancelReason(command.cancelReason)
+    if (reasonErrors.length > 0) return abortSave(transaction, done, { kind: 'validationError', errors: reasonErrors })
+
+    const reservation = await requestResult(transaction.objectStore(storeNames.reservations).get(command.reservationId)) as Reservation | undefined
+    if (!reservation) return abortSave(transaction, done, { kind: 'notFound' })
+    if (reservation.version !== command.expectedReservationVersion) return abortSave(transaction, done, { kind: 'versionConflict' })
+    if (reservation.status !== 'confirmed') return abortSave(transaction, done, { kind: 'reservationNotDispatchable' })
+    const assignmentStore = transaction.objectStore(storeNames.dispatchAssignments)
+    const current = await requestResult(assignmentStore.get(command.dispatchId)) as DispatchAssignment | undefined
+    if (!current || current.reservationId !== reservation.reservationId) return abortSave(transaction, done, { kind: 'notFound' })
+    if (current.version !== command.expectedDispatchVersion) return abortSave(transaction, done, { kind: 'dispatchVersionConflict' })
+    if (current.status !== 'assigned') return abortSave(transaction, done, { kind: 'invalidDispatchTransition' })
+    const sameReservationAssignments = await requestResult(assignmentStore.index('byReservationId').getAll(command.reservationId)) as DispatchAssignment[]
+    if (sameReservationAssignments.some((item) => item.dispatchId !== current.dispatchId && isActiveDispatch(item))) {
+      return abortSave(transaction, done, { kind: 'activeDispatchExists' })
+    }
+
+    const now = this.now().toISOString()
+    const updated: DispatchAssignment = { ...current, status: 'cancelled', cancelledAt: now, cancelledBy: command.actor, cancelReason: command.cancelReason?.trim() || undefined, updatedAt: now, updatedBy: command.actor, version: current.version + 1 }
+    const payload: OperationResultPayload = { generationId: metadata.generationId, reservationId: reservation.reservationId, dispatchId: updated.dispatchId, dispatchVersion: updated.version, attemptNumber: updated.attemptNumber }
+    assignmentStore.put(updated)
+    transaction.objectStore(storeNames.auditLogs).add({
+      auditId: this.createId(), entityType: 'dispatch', entityId: updated.dispatchId, action: 'dispatchCancelled',
+      before: dispatchAuditValue(current), after: dispatchAuditValue(updated), actor: command.actor, occurredAt: now,
+    } satisfies AuditLog)
+    transaction.objectStore(storeNames.idempotency).add(makeIdempotency(metadata.generationId, command.idempotencyKey, requestFingerprint, 'cancelDispatch', payload, now, updated.dispatchId))
+    transaction.objectStore(storeNames.metadata).put({ ...metadata, lastUsedAt: now, updatedAt: now })
+    await done
+    return { kind: 'success', payload }
+  }
+
+  private async checkDispatchPlan(transaction: IDBTransaction, plan: DispatchPlanInput, excludeDispatchId?: string): Promise<SaveResult | undefined> {
+    const errors = validateDispatchPlan(plan)
+    if (errors.length > 0) return { kind: 'validationError', errors }
+    const vehicle = await requestResult(transaction.objectStore(storeNames.vehicles).get(plan.vehicleId)) as Vehicle | undefined
+    if (!vehicle?.isActive) return { kind: 'vehicleUnavailable' }
+    if (vehicle.loadHold) return { kind: 'vehicleOnHold' }
+    const driver = await requestResult(transaction.objectStore(storeNames.drivers).get(plan.primaryDriverId)) as Driver | undefined
+    if (!driver?.isActive) return { kind: 'driverUnavailable' }
+    const assignmentStore = transaction.objectStore(storeNames.dispatchAssignments)
+    const vehicleSchedule = await requestResult(assignmentStore.index('byVehicleDate').getAll([plan.vehicleId, plan.plannedDate])) as DispatchAssignment[]
+    const vehicleConflict = vehicleSchedule.find((item) => item.dispatchId !== excludeDispatchId && isActiveDispatch(item) && timeRangesOverlap(item, plan))
+    if (vehicleConflict) return { kind: 'vehicleScheduleConflict', conflictingDispatchId: vehicleConflict.dispatchId }
+    const driverSchedule = await requestResult(assignmentStore.index('byDriverDate').getAll([plan.primaryDriverId, plan.plannedDate])) as DispatchAssignment[]
+    const driverConflict = driverSchedule.find((item) => item.dispatchId !== excludeDispatchId && isActiveDispatch(item) && timeRangesOverlap(item, plan))
+    if (driverConflict) return { kind: 'driverScheduleConflict', conflictingDispatchId: driverConflict.dispatchId }
+    return undefined
   }
 
   async findOperationResult(generationId: string, idempotencyKey: string): Promise<IdempotencyRecord | undefined> {
@@ -717,6 +984,30 @@ async function ignoreAbort(done: Promise<void>): Promise<void> {
     await done
   } catch {
     // Expected when a validation or conflict result deliberately aborts the transaction.
+  }
+}
+
+async function abortSave(transaction: IDBTransaction, done: Promise<void>, result: SaveResult): Promise<SaveResult> {
+  transaction.abort()
+  await ignoreAbort(done)
+  return result
+}
+
+function isActiveDispatch(assignment: DispatchAssignment): boolean {
+  return assignment.status === 'assigned' || assignment.status === 'inProgress'
+}
+
+function dispatchAuditValue(assignment: DispatchAssignment): Record<string, unknown> {
+  return {
+    reservationId: assignment.reservationId,
+    attemptNumber: assignment.attemptNumber,
+    status: assignment.status,
+    plannedDate: assignment.plannedDate,
+    plannedStartTime: assignment.plannedStartTime,
+    plannedEndTime: assignment.plannedEndTime,
+    vehicleId: assignment.vehicleId,
+    primaryDriverId: assignment.primaryDriverId,
+    version: assignment.version,
   }
 }
 
