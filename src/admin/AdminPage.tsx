@@ -2,11 +2,14 @@ import { useEffect, useRef, useState, type KeyboardEvent } from 'react'
 import {
   categories,
   countReservationsForCapacity,
+  categoryRequiresDispatch,
+  dispatchDisplayState,
   normalizePhoneNumber,
   todayInJapan,
   validateReservationInput,
   type CategoryId,
   type DemoSnapshot,
+  type DispatchDisplayState,
   type Reservation,
   type ReservationInput,
   type ReservationStatus,
@@ -19,9 +22,11 @@ import { publishDemoChange } from '../reserve/demoSync'
 type View = 'calendar' | 'list'
 type CalendarCategoryId = '' | CategoryId
 type EditorState = { mode: 'create' | 'edit' | 'related'; reservation?: Reservation; contactSource?: Reservation; defaultDate?: string; defaultCategory?: CategoryId }
-type ListFilters = { query: string; category: '' | CategoryId; status: '' | ReservationStatus | 'unfinished'; from: string; to: string }
+type DispatchFilter = '' | DispatchDisplayState | 'needsReview'
+type ListFilters = { query: string; category: '' | CategoryId; status: '' | ReservationStatus | 'unfinished'; dispatch: DispatchFilter; dateTarget: 'reservation' | 'dispatch'; from: string; to: string }
 
 const statusLabels: Record<ReservationStatus, string> = { received: '受付', confirmed: '確定', completed: '完了', cancelled: '取消' }
+const dispatchStateLabels: Record<DispatchDisplayState, string> = { reservationCancelled: '予約取消', beforeDispatch: '配車前', notDispatchable: '配車対象外', legacyCompleted: 'Ver1完了・配車記録なし', unassigned: '未配車', assigned: '配車済み', inProgress: '回収中', needsRedispatch: '要再配車', needsAttention: '要対応', allCollected: '全量回収済み', dataError: 'データ要確認' }
 const activeStatuses = new Set<ReservationStatus>(['received', 'confirmed', 'completed'])
 
 export function AdminPage() {
@@ -33,7 +38,7 @@ export function AdminPage() {
 function AdminWelcome({ onStart }: { onStart: () => void }) {
   return (
     <div className="page admin-welcome">
-      <header className="page-intro"><span className="eyebrow blue-text">For Demo Administrators</span><h1>管理者用 予約管理</h1><p>予約状況の確認から電話受付、状態変更、受付設定までを体験できます。</p></header>
+      <header className="page-intro"><span className="eyebrow blue-text">For Demo Administrators</span><h1>管理者用 予約・配車管理</h1><p>予約状況の確認から電話受付、配車・回収状況の確認までを体験できます。</p></header>
       <section className="admin-guide-card">
         <span className="admin-mode-badge">公開デモ版</span><h2>管理者デモを開始します</h2>
         <p>パスワードは不要です。この画面で扱う予約は、すべて架空のデモデータです。</p>
@@ -54,7 +59,7 @@ function AdminWorkspace({ onExit }: { onExit: () => void }) {
   const [selectedReservationId, setSelectedReservationId] = useState<string>()
   const [editor, setEditor] = useState<EditorState>()
   const [message, setMessage] = useState<string>()
-  const [filters, setFilters] = useState<ListFilters>(() => ({ query: '', category: '', status: '', from: `${today.slice(0, 7)}-01`, to: monthEnd(today.slice(0, 7)) }))
+  const [filters, setFilters] = useState<ListFilters>(() => initialListFilters(today))
   const selectedReservation = snapshot?.reservations.find((item) => item.reservationId === selectedReservationId)
 
   useEffect(() => {
@@ -65,7 +70,7 @@ function AdminWorkspace({ onExit }: { onExit: () => void }) {
   if (error || !snapshot?.metadata) return <div className="page admin-page"><div className="error-summary" role="alert">{error ?? '管理データを読み込めませんでした。'}</div></div>
 
   const reset = async () => {
-    if (!window.confirm('このブラウザ内の変更を消去し、架空の初期予約9件へ戻します。よろしいですか？')) return
+    if (!window.confirm('このブラウザ内の変更を消去し、予約・配車の架空初期データへ戻します。よろしいですか？')) return
     const response = await demoRepository.resetDemoData(snapshot.metadata!.generationId)
     if (response.kind === 'success' || response.kind === 'duplicateSuccess') publishDemoChange('reset')
     setMessage(resultMessage(response, '初期状態に戻しました。'))
@@ -78,19 +83,20 @@ function AdminWorkspace({ onExit }: { onExit: () => void }) {
     else setMessage(resultMessage(response, ''))
   }
   const openPastIncomplete = () => {
-    setFilters({ query: '', category: '', status: 'unfinished', from: '', to: previousDate(today) })
+    setFilters({ ...initialListFilters(today), status: 'unfinished', from: '', to: previousDate(today) })
     setView('list')
   }
+  const openDispatchFilter = (dispatch: DispatchFilter) => { setFilters({ ...initialListFilters(today), dispatch, from: '', to: '' }); setView('list') }
 
   return (
     <div className="admin-page">
       <header className="admin-toolbar">
-        <div><span className="admin-mode-badge">デモ管理者モード</span><h1>予約管理</h1></div>
+        <div><span className="admin-mode-badge">デモ管理者モード</span><h1>予約・配車管理</h1></div>
         <div className="admin-toolbar-actions"><button type="button" onClick={reset}>初期状態に戻す</button><button type="button" onClick={onExit}>デモを終了する</button><button type="button" className="danger-link" onClick={deleteAndExit}>データを削除して終了</button></div>
       </header>
       <div className="admin-content">
         {message && <div className="admin-message" role="status">{message}<button type="button" aria-label="お知らせを閉じる" onClick={() => setMessage(undefined)}>×</button></div>}
-        <SummaryCards snapshot={snapshot} month={today.slice(0, 7)} today={today} onPastIncomplete={openPastIncomplete} />
+        <SummaryCards snapshot={snapshot} month={today.slice(0, 7)} today={today} onPastIncomplete={openPastIncomplete} onDispatchFilter={openDispatchFilter} />
         <nav className="admin-tabs" aria-label="管理画面の表示切替"><button className={view === 'calendar' ? 'active' : ''} type="button" onClick={() => setView('calendar')}>カレンダー</button><button className={view === 'list' ? 'active' : ''} type="button" onClick={() => setView('list')}>予約一覧</button></nav>
         {view === 'calendar' ? (
           <AdminCalendar snapshot={snapshot} categoryId={categoryId} month={month} selectedDate={selectedDate} today={today} onCategory={setCategoryId} onMonth={setMonth} onDate={setSelectedDate} onReservation={(reservation) => setSelectedReservationId(reservation.reservationId)} onCreate={() => setEditor({ mode: 'create', defaultDate: selectedDate, defaultCategory: categoryId || undefined })} onRefresh={refresh} onMessage={setMessage} />
@@ -106,17 +112,23 @@ function AdminWorkspace({ onExit }: { onExit: () => void }) {
 
 function AdminLoading() { return <div className="page admin-page"><p className="admin-loading">管理データを読み込んでいます…</p></div> }
 
-function SummaryCards({ snapshot, month, today, onPastIncomplete }: { snapshot: DemoSnapshot; month: string; today: string; onPastIncomplete: () => void }) {
+function SummaryCards({ snapshot, month, today, onPastIncomplete, onDispatchFilter }: { snapshot: DemoSnapshot; month: string; today: string; onPastIncomplete: () => void; onDispatchFilter: (filter: DispatchFilter) => void }) {
   const inMonth = snapshot.reservations.filter((item) => item.requestedDate.startsWith(month))
   const received = inMonth.filter((item) => item.status === 'received').length
   const confirmed = inMonth.filter((item) => item.status === 'confirmed').length
   const closures = snapshot.closures.filter((item) => item.isClosed && item.date.startsWith(month)).length
   const overCapacity = countOverCapacity(snapshot, month)
   const incomplete = snapshot.reservations.filter((item) => item.requestedDate < today && (item.status === 'received' || item.status === 'confirmed')).length
-  return <><section className="summary-cards" aria-label="今月の予約状況"><Metric label="受付件数" value={received} note="当月・全カテゴリー" tone="blue" /><Metric label="確定件数" value={confirmed} note="当月・全カテゴリー" tone="green" /><Metric label="受付停止" value={closures} note="当月の日付・カテゴリー組" tone="amber" /><Metric label="上限超過" value={overCapacity} note="当月の日付・カテゴリー組" tone="red" /></section>{incomplete > 0 && <button type="button" className="incomplete-alert" onClick={onPastIncomplete}><strong>予約日を過ぎた未完了の予約が{incomplete}件あります</strong><span>予約一覧で確認する →</span></button>}</>
+  const displayStates = snapshot.reservations.map((reservation) => dispatchDisplayState(reservation, assignmentsFor(snapshot, reservation.reservationId)))
+  const countState = (state: DispatchDisplayState) => displayStates.filter((item) => item.state === state).length
+  const todayPlanned = snapshot.dispatchAssignments.filter((item) => item.plannedDate === today && (item.status === 'assigned' || item.status === 'inProgress')).length
+  const needsReview = displayStates.filter((item) => item.needsReview).length
+  const heldVehicles = snapshot.vehicles.filter((item) => item.loadHold).length
+  return <><section className="summary-cards" aria-label="今月の予約状況"><Metric label="受付件数" value={received} note="当月・全カテゴリー" tone="blue" /><Metric label="確定件数" value={confirmed} note="当月・全カテゴリー" tone="green" /><Metric label="受付停止" value={closures} note="当月の日付・カテゴリー組" tone="amber" /><Metric label="上限超過" value={overCapacity} note="当月の日付・カテゴリー組" tone="red" /></section><section className="dispatch-summary" aria-label="配車・回収状況"><DispatchMetric label="未配車" value={countState('unassigned')} onClick={() => onDispatchFilter('unassigned')} /><DispatchMetric label="配車済み" value={countState('assigned')} onClick={() => onDispatchFilter('assigned')} /><DispatchMetric label="回収中" value={countState('inProgress')} onClick={() => onDispatchFilter('inProgress')} /><DispatchMetric label="要再配車" value={countState('needsRedispatch')} tone="warning" onClick={() => onDispatchFilter('needsRedispatch')} /><DispatchMetric label="要対応" value={countState('needsAttention')} tone="danger" onClick={() => onDispatchFilter('needsAttention')} /><DispatchMetric label="要再確認" value={needsReview} tone="warning" onClick={() => onDispatchFilter('needsReview')} /><DispatchMetric label="本日予定" value={todayPlanned} /><DispatchMetric label="保留中車両" value={heldVehicles} tone={heldVehicles ? 'danger' : ''} /></section>{incomplete > 0 && <button type="button" className="incomplete-alert" onClick={onPastIncomplete}><strong>予約日を過ぎた未完了の予約が{incomplete}件あります</strong><span>予約一覧で確認する →</span></button>}</>
 }
 
 function Metric({ label, value, note, tone }: { label: string; value: number; note: string; tone: string }) { return <article className={`metric ${tone}`}><span>{label}</span><strong>{value}<small>件</small></strong><p>{note}</p></article> }
+function DispatchMetric({ label, value, tone = '', onClick }: { label: string; value: number; tone?: string; onClick?: () => void }) { const content = <><span>{label}</span><strong>{value}<small>件</small></strong></>; return onClick ? <button type="button" className={`dispatch-metric ${tone}`} onClick={onClick}>{content}<b>一覧で確認 →</b></button> : <article className={`dispatch-metric ${tone}`}>{content}</article> }
 
 type CalendarProps = { snapshot: DemoSnapshot; categoryId: CalendarCategoryId; month: string; selectedDate: string; today: string; onCategory: (id: CalendarCategoryId) => void; onMonth: (month: string) => void; onDate: (date: string) => void; onReservation: (reservation: Reservation) => void; onCreate: () => void; onRefresh: () => Promise<void>; onMessage: (text: string) => void }
 
@@ -168,15 +180,19 @@ function AdminMonthGrid({ snapshot, month, categoryId, selectedDate, onDate }: {
 }
 
 function ReservationList({ snapshot, filters, onFilters, onOpen }: { snapshot: DemoSnapshot; filters: ListFilters; onFilters: (filters: ListFilters) => void; onOpen: (reservation: Reservation) => void }) {
-  const rows = snapshot.reservations.filter((item) => matchesFilters(item, filters)).sort(sortReservations)
+  const rows = snapshot.reservations.filter((item) => matchesFilters(item, filters, snapshot)).sort(sortReservations)
   const update = (key: keyof ListFilters, value: string) => onFilters({ ...filters, [key]: value })
-  return <section className="list-panel"><div className="list-filters"><label className="wide-filter">文字検索<input value={filters.query} placeholder="受付番号・会社名・担当者名・電話番号" onChange={(e) => update('query', e.target.value)} /></label><label>カテゴリー<select value={filters.category} onChange={(e) => update('category', e.target.value)}><option value="">すべて</option>{categories.map((item) => <option value={item.id} key={item.id}>{item.name}</option>)}</select></label><label>状態<select value={filters.status} onChange={(e) => update('status', e.target.value)}><option value="">すべて</option><option value="unfinished">未完了（受付・確定）</option>{Object.entries(statusLabels).map(([value,label]) => <option value={value} key={value}>{label}</option>)}</select></label><label>希望日開始<input type="date" value={filters.from} onChange={(e) => update('from', e.target.value)} /></label><label>希望日終了<input type="date" value={filters.to} onChange={(e) => update('to', e.target.value)} /></label></div><p className="result-count">{rows.length}件の予約</p>{rows.length === 0 ? <p className="empty-state list-empty">条件に一致する予約はありません。</p> : <div className="reservation-table-wrap"><table className="reservation-table"><thead><tr><th>受付番号</th><th>希望日</th><th>カテゴリー</th><th>状態</th><th>会社名</th><th>担当者名</th><th>電話番号</th></tr></thead><tbody>{rows.map((item) => <tr key={item.reservationId} onClick={() => onOpen(item)} tabIndex={0} onKeyDown={(e) => { if (e.key === 'Enter') onOpen(item) }}><td>{item.reservationCode}</td><td>{formatDate(item.requestedDate)}</td><td>{categoryName(item.categoryId)}</td><td><Status status={item.status} /></td><td>{item.companyName}</td><td>{item.contactName}</td><td>{item.phoneDisplay}</td></tr>)}</tbody></table></div>}</section>
+  return <section className="list-panel"><div className="list-filters"><label className="wide-filter">文字検索<input value={filters.query} placeholder="受付番号・会社名・担当者名・電話番号" onChange={(e) => update('query', e.target.value)} /></label><label>カテゴリー<select value={filters.category} onChange={(e) => update('category', e.target.value)}><option value="">すべて</option>{categories.map((item) => <option value={item.id} key={item.id}>{item.name}</option>)}</select></label><label>予約状態<select value={filters.status} onChange={(e) => update('status', e.target.value)}><option value="">すべて</option><option value="unfinished">未完了（受付・確定）</option>{Object.entries(statusLabels).map(([value,label]) => <option value={value} key={value}>{label}</option>)}</select></label><label>配車状況<select value={filters.dispatch} onChange={(e) => update('dispatch', e.target.value)}><option value="">すべて</option><option value="needsReview">要再確認</option>{Object.entries(dispatchStateLabels).map(([value,label]) => <option value={value} key={value}>{label}</option>)}</select></label><label>日付の対象<select value={filters.dateTarget} onChange={(e) => update('dateTarget', e.target.value)}><option value="reservation">予約日</option><option value="dispatch">配車予定日</option></select></label><label>開始日<input type="date" value={filters.from} onChange={(e) => update('from', e.target.value)} /></label><label>終了日<input type="date" value={filters.to} onChange={(e) => update('to', e.target.value)} /></label><button className="filter-clear" type="button" onClick={() => onFilters(initialListFilters(todayInJapan()))}>条件をクリア</button></div><p className="result-count">{rows.length}件の予約</p>{rows.length === 0 ? <div className="empty-state list-empty"><p>条件に一致する予約はありません。</p><button type="button" onClick={() => onFilters(initialListFilters(todayInJapan()))}>絞り込みを解除</button></div> : <div className="reservation-table-wrap"><table className="reservation-table"><thead><tr><th>受付番号</th><th>予約日</th><th>カテゴリー</th><th>予約状態</th><th>配車状況</th><th>配車予定</th><th>会社名</th><th>担当者名</th></tr></thead><tbody>{rows.map((item) => { const assignments = assignmentsFor(snapshot, item.reservationId); const display = dispatchDisplayState(item, assignments); const assignment = currentOrLatestAssignment(assignments); return <tr key={item.reservationId} onClick={() => onOpen(item)} tabIndex={0} onKeyDown={(e) => { if (e.key === 'Enter') onOpen(item) }}><td>{item.reservationCode}</td><td>{formatDate(item.requestedDate)}</td><td>{categoryName(item.categoryId)}</td><td><Status status={item.status} /></td><td><DispatchState state={display.state} needsReview={display.needsReview} /></td><td>{assignment ? `${formatDate(assignment.plannedDate)} ${assignment.plannedStartTime}` : '—'}</td><td>{item.companyName}</td><td>{item.contactName}</td></tr> })}</tbody></table></div>}</section>
 }
 
 type DetailProps = { reservation: Reservation; snapshot: DemoSnapshot; onClose: () => void; onEdit: (r: Reservation) => void; onRelated: (r: Reservation) => void; onReuse: (r: Reservation) => void; onRefresh: () => Promise<void>; onMessage: (text: string) => void }
 function ReservationDetail(props: DetailProps) {
   const { reservation, snapshot } = props
-  const logs = snapshot.auditLogs.filter((item) => item.entityId === reservation.reservationId).sort((a,b) => a.occurredAt.localeCompare(b.occurredAt))
+  const assignments = assignmentsFor(snapshot, reservation.reservationId).sort((a, b) => a.attemptNumber - b.attemptNumber)
+  const notes = snapshot.internalNotes.filter((item) => item.reservationId === reservation.reservationId).sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+  const entityIds = new Set([reservation.reservationId, ...assignments.map((item) => item.dispatchId), ...notes.map((item) => item.noteId)])
+  const logs = snapshot.auditLogs.filter((item) => entityIds.has(item.entityId)).sort((a,b) => a.occurredAt.localeCompare(b.occurredAt))
+  const display = dispatchDisplayState(reservation, assignments)
   const related = snapshot.reservations.filter((item) => item.workGroupId === reservation.workGroupId && item.reservationId !== reservation.reservationId)
   const reacceptSource = reservation.sourceReservationId ? snapshot.reservations.find((item) => item.reservationId === reservation.sourceReservationId && item.status === 'cancelled') : undefined
   const reacceptedReservations = reservation.status === 'cancelled' ? snapshot.reservations.filter((item) => item.sourceReservationId === reservation.reservationId) : []
@@ -191,7 +207,7 @@ function ReservationDetail(props: DetailProps) {
     props.onMessage(resultMessage(result, `予約を「${action}」に変更しました。`)); await props.onRefresh()
   }
   // oxlint-disable-next-line react/refs -- The custom hook returns a stable dialog ref and keyboard handler.
-  return <div className="modal-backdrop" role="presentation"><section ref={dialog.ref} tabIndex={-1} onKeyDown={dialog.onKeyDown} className="admin-modal detail-modal" role="dialog" aria-modal="true" aria-labelledby="detail-title"><header><div><Status status={reservation.status} /><h2 id="detail-title">{reservation.reservationCode}</h2><p>関連番号：{reservation.workGroupCode}</p></div><button type="button" className="modal-close" aria-label="予約詳細を閉じる" onClick={props.onClose}>×</button></header><dl className="detail-grid"><Detail label="希望日" value={formatDate(reservation.requestedDate)} /><Detail label="カテゴリー" value={categoryName(reservation.categoryId)} /><Detail label="会社名" value={reservation.companyName} /><Detail label="担当者名" value={reservation.contactName} /><Detail label="電話番号" value={reservation.phoneDisplay} />{reservation.address && <Detail label="住所" value={reservation.address} />}<Detail label={answerLabel(reservation.categoryId)} value={answerValue(reservation)} /><Detail label="連絡事項" value={reservation.contactNotes || 'なし'} /></dl><div className="detail-actions">{(reservation.status === 'received' || reservation.status === 'confirmed') && <button type="button" onClick={() => props.onEdit(reservation)}>変更</button>}{reservation.status === 'received' && <button type="button" onClick={() => transition('confirmed')}>確定</button>}{reservation.status === 'confirmed' && <button type="button" onClick={() => transition('completed')}>完了</button>}{(reservation.status === 'received' || reservation.status === 'confirmed') && <button type="button" className="danger-button" onClick={() => transition('cancelled')}>取消</button>}<button type="button" onClick={() => props.onRelated(reservation)}>関連する作業日を追加</button><button type="button" onClick={() => props.onReuse(reservation)}>この依頼者情報を使用する</button></div>{(reacceptSource || reacceptedReservations.length > 0) && <section className="reaccept-section"><h3>再受付のつながり</h3>{reacceptSource && <p><strong>再受付元</strong><span>{formatDate(reacceptSource.requestedDate)}・{reacceptSource.reservationCode}・{statusLabels[reacceptSource.status]}</span></p>}{reacceptedReservations.map((item) => <p key={item.reservationId}><strong>再受付先</strong><span>{formatDate(item.requestedDate)}・{item.reservationCode}・{statusLabels[item.status]}</span></p>)}</section>}{related.length > 0 && <section className="related-section"><h3>同じ作業の関連予約</h3>{related.map((item) => <p key={item.reservationId}>{formatDate(item.requestedDate)}・{item.reservationCode}・{statusLabels[item.status]}</p>)}</section>}<section className="history-section"><h3>操作履歴</h3>{logs.map((log) => <div key={log.auditId}><time>{formatDateTime(log.occurredAt)}</time><strong>{auditLabel(log.action, log.after)}</strong><span>{log.actor === 'demo-admin' ? 'デモ管理者' : 'デモ初期データ'}</span></div>)}</section></section></div>
+  return <div className="modal-backdrop" role="presentation"><section ref={dialog.ref} tabIndex={-1} onKeyDown={dialog.onKeyDown} className="admin-modal detail-modal" role="dialog" aria-modal="true" aria-labelledby="detail-title"><header><div><Status status={reservation.status} /><h2 id="detail-title">{reservation.reservationCode}</h2><p>関連番号：{reservation.workGroupCode}</p></div><button type="button" className="modal-close" aria-label="予約詳細を閉じる" onClick={props.onClose}>×</button></header><dl className="detail-grid"><Detail label="希望日" value={formatDate(reservation.requestedDate)} /><Detail label="カテゴリー" value={categoryName(reservation.categoryId)} /><Detail label="会社名" value={reservation.companyName} /><Detail label="担当者名" value={reservation.contactName} /><Detail label="電話番号" value={reservation.phoneDisplay} />{reservation.address && <Detail label="住所" value={reservation.address} />}<Detail label={answerLabel(reservation.categoryId)} value={answerValue(reservation)} /><Detail label="連絡事項" value={reservation.contactNotes || 'なし'} /></dl><section className="dispatch-detail-section"><div className="dispatch-detail-title"><h3>配車・回収</h3><DispatchState state={display.state} needsReview={display.needsReview} /></div>{assignments.length === 0 ? <p className="empty-state">配車記録はありません。</p> : assignments.map((item) => { const vehicle = snapshot.vehicles.find((entry) => entry.vehicleId === item.vehicleId); const driver = snapshot.drivers.find((entry) => entry.driverId === item.primaryDriverId); return <article className="dispatch-record" key={item.dispatchId}><strong>第{item.attemptNumber}便・{dispatchStateLabels[item.status === 'assigned' ? 'assigned' : item.status === 'inProgress' ? 'inProgress' : item.outcome === 'allCollected' ? 'allCollected' : item.outcome === 'partiallyCollected' ? 'needsRedispatch' : item.outcome === 'notCollected' ? 'needsAttention' : 'dataError']}</strong><span>{formatDate(item.plannedDate)} {item.plannedStartTime}–{item.plannedEndTime}</span><span>{vehicle?.displayName ?? '車両不明'}・{driver?.displayName ?? '担当者不明'}</span>{item.driverInstructions && <p><b>ドライバー向け指示</b>{item.driverInstructions}</p>}{item.outcomeNotes && <p><b>結果メモ</b>{item.outcomeNotes}</p>}</article> })}</section>{notes.length > 0 && <section className="internal-note-section"><h3>社内補足</h3><p className="section-help">依頼者・ドライバーには表示されません。</p>{notes.map((note) => <article key={note.noteId}><p>{note.body}</p><small>{formatDateTime(note.createdAt)}・デモ管理者</small></article>)}</section>}<div className="detail-actions">{(reservation.status === 'received' || reservation.status === 'confirmed') && <button type="button" onClick={() => props.onEdit(reservation)}>変更</button>}{reservation.status === 'received' && <button type="button" onClick={() => transition('confirmed')}>確定</button>}{reservation.status === 'confirmed' && !categoryRequiresDispatch(reservation.categoryId) && <button type="button" onClick={() => transition('completed')}>完了</button>}{(reservation.status === 'received' || reservation.status === 'confirmed') && <button type="button" className="danger-button" onClick={() => transition('cancelled')}>取消</button>}<button type="button" onClick={() => props.onRelated(reservation)}>関連する作業日を追加</button><button type="button" onClick={() => props.onReuse(reservation)}>この依頼者情報を使用する</button></div>{(reacceptSource || reacceptedReservations.length > 0) && <section className="reaccept-section"><h3>再受付のつながり</h3>{reacceptSource && <p><strong>再受付元</strong><span>{formatDate(reacceptSource.requestedDate)}・{reacceptSource.reservationCode}・{statusLabels[reacceptSource.status]}</span></p>}{reacceptedReservations.map((item) => <p key={item.reservationId}><strong>再受付先</strong><span>{formatDate(item.requestedDate)}・{item.reservationCode}・{statusLabels[item.status]}</span></p>)}</section>}{related.length > 0 && <section className="related-section"><h3>同じ作業の関連予約</h3>{related.map((item) => <p key={item.reservationId}>{formatDate(item.requestedDate)}・{item.reservationCode}・{statusLabels[item.status]}</p>)}</section>}<section className="history-section"><h3>操作履歴</h3>{logs.map((log) => <div key={log.auditId}><time>{formatDateTime(log.occurredAt)}</time><strong>{auditLabel(log.action, log.after)}</strong><span>{log.actor === 'demo-admin' ? 'デモ管理者' : log.actor.startsWith('demo-driver') ? 'デモドライバー' : 'デモ初期データ'}</span></div>)}</section></section></div>
 }
 
 function AdminReservationEditor({ state, snapshot, onClose, onSaved }: { state: EditorState; snapshot: DemoSnapshot; onClose: () => void; onSaved: (message: string) => Promise<void> }) {
@@ -244,13 +260,14 @@ function AdminReservationEditor({ state, snapshot, onClose, onSaved }: { state: 
 }
 
 function Status({ status }: { status: ReservationStatus }) { return <span className={`reservation-status ${status}`}>{statusLabels[status]}</span> }
+function DispatchState({ state, needsReview }: { state: DispatchDisplayState; needsReview: boolean }) { return <span className={`dispatch-state ${state}`}>{dispatchStateLabels[state]}{needsReview ? '・要再確認' : ''}</span> }
 function Detail({ label, value }: { label: string; value: string }) { return <div><dt>{label}</dt><dd>{value}</dd></div> }
 function categoryName(id: CategoryId) { return categories.find((item) => item.id === id)?.name ?? id }
 function answerLabel(id: CategoryId) { return id === 'keikoukan' ? 'おおよその本数' : id === 'kagu' ? '品目と数量' : '種類とおおよその数量' }
 function answerValue(reservation: Reservation) { return reservation.categoryId === 'keikoukan' ? `${String(reservation.categoryAnswers.approximateTubeCount)}本` : String(reservation.categoryAnswers[reservation.categoryId === 'kagu' ? 'itemsAndQuantities' : 'typesAndQuantities']) }
 function formatDateTime(value: string) { return new Intl.DateTimeFormat('ja-JP', { timeZone: 'Asia/Tokyo', dateStyle: 'short', timeStyle: 'short' }).format(new Date(value)) }
 function auditLabel(action: string, after?: Record<string, unknown>) {
-  const label = ({ created: '予約作成', confirmed: '確定', completed: '完了', cancelled: '取消', updated: '内容変更', relatedDateAdded: '関連日追加', reaccepted: '取消予約から再受付', reacceptedAs: '新しい予約として再受付' } as Record<string,string>)[action] ?? action
+  const label = ({ created: '予約作成', confirmed: '確定', completed: '完了', cancelled: '取消', updated: '内容変更', relatedDateAdded: '関連日追加', reaccepted: '取消予約から再受付', reacceptedAs: '新しい予約として再受付', dispatchCreated: '配車登録', dispatchUpdated: '配車変更', dispatchStarted: '回収開始', dispatchCompleted: '作業結果登録', dispatchCancelled: '配車取消', dispatchReviewAcknowledged: '予約変更を確認済み', internalNoteAdded: '社内補足を追加', vehicleHoldStarted: '車両保留を開始', vehicleHoldUpdated: '車両保留を変更', vehicleHoldReleased: '車両保留を解除' } as Record<string,string>)[action] ?? action
   const resultStatus = after?.status
   if ((action === 'reaccepted' || action === 'reacceptedAs') && typeof resultStatus === 'string' && resultStatus in statusLabels) {
     return `${label}（${statusLabels[resultStatus as ReservationStatus]}）`
@@ -266,7 +283,10 @@ function monthCells(month: string): Array<string | undefined> { const [year,valu
 function maximumDailyCount(snapshot: DemoSnapshot, categoryId: CategoryId) { const counts = new Map<string,number>(); snapshot.reservations.filter((item)=>item.categoryId===categoryId&&activeStatuses.has(item.status)).forEach((item)=>counts.set(item.requestedDate,(counts.get(item.requestedDate)??0)+1)); return Math.max(0,...counts.values()) }
 function calendarReservationCount(reservations: Reservation[], date: string, categoryId: CalendarCategoryId) { return reservations.filter((item) => item.requestedDate === date && (!categoryId || item.categoryId === categoryId) && activeStatuses.has(item.status)).length }
 function countOverCapacity(snapshot: DemoSnapshot, month: string) { let count=0; for(const category of categories){ const limit=Number(snapshot.settings.find((item)=>item.categoryId===category.id)?.dailyLimit); const dates=new Set(snapshot.reservations.filter((item)=>item.categoryId===category.id&&item.requestedDate.startsWith(month)).map((item)=>item.requestedDate)); for(const date of dates) if(limit>0&&countReservationsForCapacity(snapshot.reservations,date,category.id)>limit) count++ } return count }
-function matchesFilters(item: Reservation, filters: ListFilters) { const query=normalizeSearch(filters.query); const haystack=normalizeSearch([item.reservationCode,item.workGroupCode,item.companyName,item.contactName,item.phoneDisplay,item.phoneNormalized].join(' ')); const statusMatches=!filters.status||(filters.status==='unfinished'?(item.status==='received'||item.status==='confirmed'):item.status===filters.status); return (!query||haystack.includes(query))&&(!filters.category||item.categoryId===filters.category)&&statusMatches&&(!filters.from||item.requestedDate>=filters.from)&&(!filters.to||item.requestedDate<=filters.to) }
+function initialListFilters(today: string): ListFilters { return { query: '', category: '', status: '', dispatch: '', dateTarget: 'reservation', from: `${today.slice(0, 7)}-01`, to: monthEnd(today.slice(0, 7)) } }
+function assignmentsFor(snapshot: DemoSnapshot, reservationId: string) { return snapshot.dispatchAssignments.filter((item) => item.reservationId === reservationId) }
+function currentOrLatestAssignment(assignments: DemoSnapshot['dispatchAssignments']) { return [...assignments].sort((a, b) => Number(b.status === 'assigned' || b.status === 'inProgress') - Number(a.status === 'assigned' || a.status === 'inProgress') || b.attemptNumber - a.attemptNumber)[0] }
+function matchesFilters(item: Reservation, filters: ListFilters, snapshot: DemoSnapshot) { const query=normalizeSearch(filters.query); const haystack=normalizeSearch([item.reservationCode,item.workGroupCode,item.companyName,item.contactName,item.phoneDisplay,item.phoneNormalized].join(' ')); const statusMatches=!filters.status||(filters.status==='unfinished'?(item.status==='received'||item.status==='confirmed'):item.status===filters.status); const assignments=assignmentsFor(snapshot,item.reservationId); const display=dispatchDisplayState(item,assignments); const dispatchMatches=!filters.dispatch||(filters.dispatch==='needsReview'?display.needsReview:display.state===filters.dispatch); const assignment=currentOrLatestAssignment(assignments); const targetDate=filters.dateTarget==='dispatch'?assignment?.plannedDate:item.requestedDate; const dateMatches=Boolean(query)||(Boolean(targetDate)&&(!filters.from||targetDate!<filters.from)&&(!filters.to||targetDate!>filters.to)); return (!query||haystack.includes(query))&&(!filters.category||item.categoryId===filters.category)&&statusMatches&&dispatchMatches&&dateMatches }
 function normalizeSearch(value: string) { return normalizePhoneNumber(value).toLowerCase().replace(/\s/g,'') }
 function reservationToInput(reservation?: Reservation, contact?: Reservation, defaultCategory?: CategoryId, defaultDate?: string): ReservationInput { const categoryId=reservation?.categoryId??(defaultCategory??contact?.categoryId??'keikoukan'); const blankAnswers=categoryId==='keikoukan'?{approximateTubeCount:''}:categoryId==='kagu'?{itemsAndQuantities:''}:{typesAndQuantities:''}; return { categoryId, requestedDate: reservation?.requestedDate??defaultDate??'', companyName: reservation?.companyName??contact?.companyName??'', contactName: reservation?.contactName??contact?.contactName??'', phone: reservation?.phoneDisplay??contact?.phoneDisplay??'', address: categoryId==='keikoukan'?undefined:reservation?.address??contact?.address??'', contactNotes: reservation?.contactNotes??'', categoryAnswers: reservation?.categoryAnswers??blankAnswers } }
 function normalizeAdminInput(input: ReservationInput): ReservationInput { if(input.categoryId!=='keikoukan') return input; return {...input,categoryAnswers:{approximateTubeCount:Number(input.categoryAnswers.approximateTubeCount)}} }

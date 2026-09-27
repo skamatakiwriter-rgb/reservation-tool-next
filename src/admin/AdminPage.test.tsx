@@ -54,6 +54,16 @@ describe('管理者画面', () => {
     expect(screen.queryByRole('dialog', { name: 'DEMO-003' })).not.toBeInTheDocument()
   })
 
+  it('予約状態と配車状況を別表示し、要再配車から対象予約を絞り込む', async () => {
+    renderPage()
+    await startAdmin()
+    fireEvent.click(screen.getByRole('button', { name: /要再配車/ }))
+    expect(screen.getByRole('columnheader', { name: '予約状態' })).toBeInTheDocument()
+    expect(screen.getByRole('columnheader', { name: '配車状況' })).toBeInTheDocument()
+    expect(screen.getByLabelText('配車状況')).toHaveValue('needsRedispatch')
+    expect(await screen.findByText('DEMO-014')).toBeInTheDocument()
+  })
+
   it('操作履歴を予約作成から現在の状態まで古い順に表示する', async () => {
     renderPage()
     await startAdmin()

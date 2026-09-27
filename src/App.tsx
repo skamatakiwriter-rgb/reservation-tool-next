@@ -2,11 +2,13 @@ import { Link, NavLink, Route, Routes } from 'react-router'
 import './App.css'
 import { ReservePage } from './reserve/ReservePage'
 import { AdminPage } from './admin/AdminPage'
+import { DriverPage } from './driver/DriverPage'
 
 const navItems = [
   { to: '/', label: 'デモ入口', end: true },
   { to: '/reserve', label: '利用者画面' },
-  { to: '/admin', label: '管理者画面' },
+  { to: '/admin', label: '予約・配車管理' },
+  { to: '/driver', label: 'ドライバー画面' },
 ]
 
 function AppShell() {
@@ -31,6 +33,7 @@ function AppShell() {
           <Route index element={<EntryPage />} />
           <Route path="reserve" element={<ReservePage />} />
           <Route path="admin" element={<AdminPage />} />
+          <Route path="driver" element={<DriverPage />} />
           <Route path="*" element={<NotFoundPage />} />
         </Routes>
       </main>
@@ -48,8 +51,8 @@ function EntryPage() {
     <div className="page entry-page">
       <section className="hero-panel">
         <span className="eyebrow">Reservation Management Demo</span>
-        <h1>予約受付と管理を、<br />ひとつのデモで。</h1>
-        <p className="lead">申込み側と管理側の流れを、同じブラウザ内の架空データで確認できる予約管理ツールです。</p>
+        <h1>予約から回収までを、<br />ひとつのデモで。</h1>
+        <p className="lead">申込み、予約・配車管理、ドライバーの流れを、同じブラウザ内の架空データで確認できる業務ツールです。</p>
         <div className="notice" role="note">
           <strong>公開デモ版</strong>
           <span>実在する会社名・氏名・住所・電話番号は入力しないでください。</span>
@@ -58,8 +61,9 @@ function EntryPage() {
       </section>
 
       <section className="route-grid" aria-label="デモ画面を選択">
-        <RouteCard index="01" title="予約を申し込む" description="カテゴリーと希望日を選び、利用者として予約の申込みを試します。" to="/reserve" action="利用者画面へ" tone="green" />
-        <RouteCard index="02" title="管理画面を試す" description="予約一覧、カレンダー、受付状況を管理者として確認します。" to="/admin" action="管理者画面へ" tone="blue" />
+        <RouteCard index="01 / Ver1" title="予約を申し込む" description="カテゴリーと希望日を選び、利用者として予約の申込みを試します。" to="/reserve" action="利用者画面へ" tone="green" />
+        <RouteCard index="02 / Ver2" title="予約・配車を管理する" description="予約一覧から配車状況と回収状況を確認する管理画面です。" to="/admin" action="予約・配車管理へ" tone="blue" />
+        <RouteCard index="03 / Ver2" title="本日の担当を確認する" description="架空ドライバーを選び、担当案件と現場向け情報を確認します。" to="/driver" action="ドライバー画面へ" tone="orange" />
       </section>
     </div>
   )
@@ -71,7 +75,7 @@ type RouteCardProps = {
   description: string
   to: string
   action: string
-  tone: 'green' | 'blue'
+  tone: 'green' | 'blue' | 'orange'
 }
 
 function RouteCard({ index, title, description, to, action, tone }: RouteCardProps) {
