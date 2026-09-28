@@ -1,8 +1,10 @@
-# 予約管理ツール — 公開デモ v1.0.0
+# 予約管理ツール — Ver1公開デモ／Ver2開発ブランチ
 
 蛍光管持込・家具家財撤去・ビン缶回収を題材に、利用者の申込みと管理者の受付業務を一つにつないだポートフォリオ作品です。カテゴリーごとの受付方法、日別の予約枠、変更・取消・再受付の履歴まで確認できます。
 
-**[公開デモを開く](https://reservation-tool-next-demo.netlify.app/)** · [利用者画面](https://reservation-tool-next-demo.netlify.app/reserve) · [管理者画面](https://reservation-tool-next-demo.netlify.app/admin)
+**[Ver1公開デモを開く](https://reservation-tool-next-demo.netlify.app/)** · [利用者画面](https://reservation-tool-next-demo.netlify.app/reserve) · [管理者画面](https://reservation-tool-next-demo.netlify.app/admin)
+
+> `main`と上記URLはVer1です。`feature/v2-dispatch-management`では配車・回収管理を追加したVer2をローカル実装中で、まだ公開していません。
 
 ![カテゴリー別の予約状況と選択日の予約を確認できる管理カレンダー](docs/images/02-admin-calendar.png)
 
@@ -35,6 +37,18 @@
 - 受付設定：カテゴリー別上限、日付別受付停止、過去日の未完了予約の案内
 - 保存：IndexedDB、同一ブラウザの複数タブへの変更通知、初期状態への復元、データ削除
 
+### Ver2開発ブランチで追加した機能
+
+- 予約状態とは別の配車状況、配車予定日による絞り込み、配車・回収状況の集計
+- 予約詳細内での車両・主担当ドライバー割当、変更、作業前取消、再配車
+- 依頼時申告、社内補足、ドライバー向け指示の表示範囲分離
+- ドライバー画面での担当確認、任意の回収開始、全量回収・一部回収・回収不可の登録
+- 配車後に予約内容が変わった場合の要再確認
+- 搬入判断待ち、積み置き中、保留解除と、保留車両の利用制限
+- DB版1から2への既存データ移行と、Ver2完全初期データ17件
+
+ローカルでの確認手順は[Ver2ローカル操作ガイド](docs/ver2/20_予約管理ツール_Ver2_ローカル操作ガイド.md)、検査結果と未確認事項は[Ver2ローカル受入確認記録](docs/ver2/19_予約管理ツール_Ver2_ローカル受入確認記録.md)を参照してください。
+
 ## デモの範囲
 
 **実在する会社名・氏名・住所・電話番号を入力しないでください。** 管理者画面にパスワードはありません。本番用の認証機能を示すものではありません。
@@ -52,7 +66,9 @@ React 19 / TypeScript 6 / Vite 8 / React Router 8 / IndexedDB / BroadcastChannel
 ```text
 src/
   reserve/          利用者画面、日付選択、変更通知
-  admin/            管理者画面
+  admin/            予約・配車管理画面
+  driver/           ドライバー担当画面
+  dispatch/         管理者・ドライバー共通の作業結果入力
   domain/           入力・日付・受付枠・状態の業務ルール
     storage/        IndexedDB、初期データ、履歴、競合制御
   test/             テスト共通設定
@@ -61,6 +77,7 @@ docs/
   images/           公開デモの実画面
   image-guide.md    掲載順、キャプション、代替テキスト
   verification.md   v1.0.0の確認記録
+  ver2/             Ver2設計、実装指示、受入記録、操作ガイド
 ```
 
 保存処理では、予約・履歴・再送識別情報をIndexedDBの同一トランザクションで扱います。ブラウザ間共有やサーバー側の排他制御を実装したものではありません。
@@ -88,12 +105,16 @@ npm run build
 npm run preview
 ```
 
-2026年9月18日の確認では、型検査・自動テスト9ファイル74件・Lint・本番ビルドがすべて合格しました。検査範囲と実画面確認は[確認記録](docs/verification.md)を参照してください。
+Ver1は2026年9月18日に、型検査・自動テスト9ファイル74件・Lint・本番ビルドが合格しました。検査範囲は[Ver1確認記録](docs/verification.md)を参照してください。
+
+Ver2開発ブランチは2026年9月28日に、型検査・自動テスト19ファイル135件・Lint・本番ビルドが合格しました。これはローカル公開候補の確認であり、公開URLの確認や実運用適合性の保証ではありません。
 
 ## 公開とバージョン
 
-GitHubの `main` をNetlifyに連携しています。ビルドは `npm run build`、公開先は `dist`。`netlify.toml` でSPAの直接アクセスを処理します。
+GitHubの `main` をNetlifyに連携しています。現在の公開対象はVer1です。ビルドは `npm run build`、公開先は `dist`。`netlify.toml` でSPAの直接アクセスを処理します。
 
 `v1.0.0` は完成時点のソース・説明資料・画像を固定するGitタグです。公開デモURLは `main` の更新に追従するため、将来もv1.0.0のままとは限りません。変更は新しいコミット・バージョンで記録し、公開済みタグを付け替えません。
+
+Ver2は`feature/v2-dispatch-management`で実装しています。公開ブランチ、Netlifyサイト、`v2.0.0`タグはローカル最終受入後の別工程で決定します。
 
 [変更履歴](CHANGELOG.md) · [制作紹介](docs/portfolio.md) · [GitHub](https://github.com/skamatakiwriter-rgb/reservation-tool-next)
