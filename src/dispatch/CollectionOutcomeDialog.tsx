@@ -29,26 +29,45 @@ export function CollectionOutcomeDialog({ reservation, assignment, vehicleName, 
   const [consultationNote, setConsultationNote] = useState('')
   const [error, setError] = useState<string>()
   const [saving, setSaving] = useState(false)
+  const savingRef = useRef(false)
   const dialogRef = useRef<HTMLElement>(null)
+  const previousFocusRef = useRef<HTMLElement | null>(null)
 
-  useEffect(() => { dialogRef.current?.focus() }, [])
+  useEffect(() => {
+    previousFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null
+    dialogRef.current?.focus()
+    return () => previousFocusRef.current?.focus()
+  }, [])
   const close = () => {
     const dirty = outcome || actualCollectionSummary || outcomeNotes || requestHold || holdReason || consultationNote
     if (dirty && !window.confirm('入力中の作業結果を破棄して戻りますか？')) return
     onClose()
   }
   const save = async () => {
+    if (savingRef.current) return
     if (!outcome) { setError('回収結果を選択してください。'); return }
     const errors = validateCollectionOutcome(outcome, actualCollectionSummary, outcomeNotes)
     if (errors.length > 0) { setError(errors[0].message); return }
     if (requestHold && (!holdReason.trim() || holdReason.trim().length > 500)) { setError('搬入判断待ちの理由を500文字以内で入力してください。'); return }
     if (consultationNote.length > 500) { setError('相談内容は500文字以内にしてください。'); return }
-    setSaving(true); setError(undefined)
-    const submitError = await onSubmit({ outcome, actualCollectionSummary: actualCollectionSummary.trim() || undefined, outcomeNotes: outcomeNotes.trim() || undefined, holdRequest: requestHold ? { reason: holdReason.trim(), consultationNote: consultationNote.trim() || undefined } : undefined })
-    if (submitError) setError(submitError)
-    setSaving(false)
+    savingRef.current = true; setSaving(true); setError(undefined)
+    try {
+      const submitError = await onSubmit({ outcome, actualCollectionSummary: actualCollectionSummary.trim() || undefined, outcomeNotes: outcomeNotes.trim() || undefined, holdRequest: requestHold ? { reason: holdReason.trim(), consultationNote: consultationNote.trim() || undefined } : undefined })
+      if (submitError) setError(submitError)
+    } finally {
+      savingRef.current = false; setSaving(false)
+    }
   }
-  const onKeyDown = (event: KeyboardEvent<HTMLElement>) => { if (event.key === 'Escape' && !saving) { event.preventDefault(); close() } }
+  const onKeyDown = (event: KeyboardEvent<HTMLElement>) => {
+    if (event.key === 'Escape' && !saving) { event.preventDefault(); close(); return }
+    if (event.key !== 'Tab' || !dialogRef.current) return
+    const focusable = Array.from(dialogRef.current.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), textarea:not(:disabled), [tabindex]:not([tabindex="-1"])'))
+    if (focusable.length === 0) return
+    const first = focusable[0]
+    const last = focusable[focusable.length - 1]
+    if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus() }
+    else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus() }
+  }
   const holdAllowedForOutcome = outcome !== 'notCollected'
 
   return <div className="outcome-backdrop"><section ref={dialogRef} tabIndex={-1} onKeyDown={onKeyDown} className="outcome-dialog" role="dialog" aria-modal="true" aria-labelledby="outcome-title">

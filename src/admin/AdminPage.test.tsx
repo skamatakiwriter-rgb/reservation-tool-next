@@ -23,6 +23,13 @@ async function startAdmin() {
 }
 
 describe('管理者画面', () => {
+  it('初期表示月の予約を日付範囲内で一覧表示する', async () => {
+    renderPage()
+    await startAdmin()
+    fireEvent.click(screen.getByRole('button', { name: '予約一覧' }))
+    expect(screen.getByText('17件の予約')).toBeInTheDocument()
+  })
+
   it('パスワードなしの案内から、集計と管理カレンダーを表示する', async () => {
     renderPage()
     expect(screen.queryByRole('textbox')).not.toBeInTheDocument()
