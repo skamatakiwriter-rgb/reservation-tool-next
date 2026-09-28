@@ -11,6 +11,13 @@ type DemoDataState = {
   refresh: () => Promise<void>
 }
 
+export function demoDataLoadErrorMessage(error: unknown): string {
+  if (error instanceof Error && error.message.includes('別の画面がデータベース更新を妨げています')) {
+    return '別のタブで旧版のデモ画面が開かれています。旧版のタブをすべて閉じてから、この画面を再読み込みしてください。'
+  }
+  return 'ブラウザ内のデモデータを読み込めませんでした。再読み込みしてお試しください。'
+}
+
 export function useDemoData(scope: 'public' | 'admin' | 'driver' = 'public'): DemoDataState {
   const [snapshot, setSnapshot] = useState<DemoSnapshot>()
   const [loading, setLoading] = useState(true)
@@ -27,8 +34,8 @@ export function useDemoData(scope: 'public' | 'admin' | 'driver' = 'public'): De
         await repository.ensureInitialized()
         const next = await repository.snapshot(scope)
         if (active) setSnapshot(next)
-      } catch {
-        if (active) setError('ブラウザ内のデモデータを読み込めませんでした。再読み込みしてお試しください。')
+      } catch (error) {
+        if (active) setError(demoDataLoadErrorMessage(error))
       } finally {
         if (active) setLoading(false)
       }
