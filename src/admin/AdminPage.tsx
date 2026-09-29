@@ -1,9 +1,11 @@
-import { useEffect, useRef, useState, type KeyboardEvent } from 'react'
+import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
 import {
   categories,
+  addCalendarDays,
   countReservationsForCapacity,
   categoryRequiresDispatch,
   dispatchDisplayState,
+  dispatchDeadlineTiming,
   normalizePhoneNumber,
   todayInJapan,
   validateDispatchPlan,
@@ -91,6 +93,7 @@ function AdminWorkspace({ onExit }: { onExit: () => void }) {
     setView('list')
   }
   const openDispatchFilter = (dispatch: DispatchFilter) => { setFilters({ ...initialListFilters(today), dispatch, from: '', to: '' }); setView('list') }
+  const openDispatchDeadline = (date: string) => { setFilters({ ...initialListFilters(today), status: 'confirmed', dispatch: 'unassigned', from: date, to: date }); setView('list') }
 
   return (
     <div className="admin-page">
@@ -100,7 +103,7 @@ function AdminWorkspace({ onExit }: { onExit: () => void }) {
       </header>
       <div className="admin-content">
         {message && <div className="admin-message" role="status">{message}<button type="button" aria-label="お知らせを閉じる" onClick={() => setMessage(undefined)}>×</button></div>}
-        <SummaryCards snapshot={snapshot} month={today.slice(0, 7)} today={today} onPastIncomplete={openPastIncomplete} onDispatchFilter={openDispatchFilter} />
+        <SummaryCards snapshot={snapshot} month={today.slice(0, 7)} today={today} onPastIncomplete={openPastIncomplete} onDispatchFilter={openDispatchFilter} onDispatchDeadline={openDispatchDeadline} />
         <nav className="admin-tabs" aria-label="管理画面の表示切替"><button className={view === 'calendar' ? 'active' : ''} type="button" onClick={() => setView('calendar')}>カレンダー</button><button className={view === 'list' ? 'active' : ''} type="button" onClick={() => setView('list')}>予約一覧</button></nav>
         {view === 'calendar' ? (
           <AdminCalendar snapshot={snapshot} categoryId={categoryId} month={month} selectedDate={selectedDate} today={today} onCategory={setCategoryId} onMonth={setMonth} onDate={setSelectedDate} onReservation={(reservation) => setSelectedReservationId(reservation.reservationId)} onCreate={() => setEditor({ mode: 'create', defaultDate: selectedDate, defaultCategory: categoryId || undefined })} onRefresh={refresh} onMessage={setMessage} />
@@ -116,7 +119,7 @@ function AdminWorkspace({ onExit }: { onExit: () => void }) {
 
 function AdminLoading() { return <div className="page admin-page"><p className="admin-loading">管理データを読み込んでいます…</p></div> }
 
-function SummaryCards({ snapshot, month, today, onPastIncomplete, onDispatchFilter }: { snapshot: DemoSnapshot; month: string; today: string; onPastIncomplete: () => void; onDispatchFilter: (filter: DispatchFilter) => void }) {
+function SummaryCards({ snapshot, month, today, onPastIncomplete, onDispatchFilter, onDispatchDeadline }: { snapshot: DemoSnapshot; month: string; today: string; onPastIncomplete: () => void; onDispatchFilter: (filter: DispatchFilter) => void; onDispatchDeadline: (date: string) => void }) {
   const inMonth = snapshot.reservations.filter((item) => item.requestedDate.startsWith(month))
   const received = inMonth.filter((item) => item.status === 'received').length
   const confirmed = inMonth.filter((item) => item.status === 'confirmed').length
@@ -128,11 +131,18 @@ function SummaryCards({ snapshot, month, today, onPastIncomplete, onDispatchFilt
   const todayPlanned = snapshot.dispatchAssignments.filter((item) => item.plannedDate === today && (item.status === 'assigned' || item.status === 'inProgress')).length
   const needsReview = displayStates.filter((item) => item.needsReview).length
   const heldVehicles = snapshot.vehicles.filter((item) => item.loadHold).length
-  return <><section className="summary-cards" aria-label="今月の予約状況"><Metric label="受付件数" value={received} note="当月・全カテゴリー" tone="blue" /><Metric label="確定件数" value={confirmed} note="当月・全カテゴリー" tone="green" /><Metric label="受付停止" value={closures} note="当月の日付・カテゴリー組" tone="amber" /><Metric label="上限超過" value={overCapacity} note="当月の日付・カテゴリー組" tone="red" /></section><section className="dispatch-summary" aria-label="配車・回収状況"><DispatchMetric label="未配車" value={countState('unassigned')} onClick={() => onDispatchFilter('unassigned')} /><DispatchMetric label="配車済み" value={countState('assigned')} onClick={() => onDispatchFilter('assigned')} /><DispatchMetric label="回収中" value={countState('inProgress')} onClick={() => onDispatchFilter('inProgress')} /><DispatchMetric label="要再配車" value={countState('needsRedispatch')} tone="warning" onClick={() => onDispatchFilter('needsRedispatch')} /><DispatchMetric label="要対応" value={countState('needsAttention')} tone="danger" onClick={() => onDispatchFilter('needsAttention')} /><DispatchMetric label="要再確認" value={needsReview} tone="warning" onClick={() => onDispatchFilter('needsReview')} /><DispatchMetric label="本日予定" value={todayPlanned} /><DispatchMetric label="保留中車両" value={heldVehicles} tone={heldVehicles ? 'danger' : ''} /></section>{incomplete > 0 && <button type="button" className="incomplete-alert" onClick={onPastIncomplete}><strong>予約日を過ぎた未完了の予約が{incomplete}件あります</strong><span>予約一覧で確認する →</span></button>}</>
+  const deadlines = snapshot.reservations.reduce((counts, reservation) => {
+    const state = dispatchDisplayState(reservation, assignmentsFor(snapshot, reservation.reservationId)).state
+    const timing = state === 'unassigned' ? dispatchDeadlineTiming(reservation.requestedDate, today) : undefined
+    if (timing) counts[timing].push(reservation)
+    return counts
+  }, { today: [] as Reservation[], tomorrow: [] as Reservation[], twoDays: [] as Reservation[] })
+  return <><section className="summary-cards" aria-label="今月の予約状況"><Metric label="受付件数" value={received} note="当月・全カテゴリー" tone="blue" /><Metric label="確定件数" value={confirmed} note="当月・全カテゴリー" tone="green" /><Metric label="受付停止" value={closures} note="当月の日付・カテゴリー組" tone="amber" /><Metric label="上限超過" value={overCapacity} note="当月の日付・カテゴリー組" tone="red" /></section><section className="dispatch-summary" aria-label="配車・回収状況"><DispatchMetric label="未配車" value={countState('unassigned')} onClick={() => onDispatchFilter('unassigned')} /><DispatchMetric label="配車済み" value={countState('assigned')} onClick={() => onDispatchFilter('assigned')} /><DispatchMetric label="回収中" value={countState('inProgress')} onClick={() => onDispatchFilter('inProgress')} /><DispatchMetric label="要再配車" value={countState('needsRedispatch')} tone="warning" onClick={() => onDispatchFilter('needsRedispatch')} /><DispatchMetric label="要対応" value={countState('needsAttention')} tone="danger" onClick={() => onDispatchFilter('needsAttention')} /><DispatchMetric label="要再確認" value={needsReview} tone="warning" onClick={() => onDispatchFilter('needsReview')} /><DispatchMetric label="本日予定" value={todayPlanned} /><DispatchMetric label="保留中車両" value={heldVehicles} tone={heldVehicles ? 'danger' : ''} /></section><div className="dispatch-deadline-alerts" aria-label="配車期限の警告">{deadlines.today.length > 0 && <DispatchDeadlineAlert tone="danger" date={today} onClick={onDispatchDeadline}><strong>本日の未配車が{deadlines.today.length}件あります</strong><span>至急、配車を確定してください →</span></DispatchDeadlineAlert>}{deadlines.tomorrow.length > 0 && <DispatchDeadlineAlert tone="danger" date={addCalendarDays(today, 1)} onClick={onDispatchDeadline}><strong>明日の未配車が{deadlines.tomorrow.length}件あります</strong><span>至急、配車を確定してください →</span></DispatchDeadlineAlert>}{deadlines.twoDays.length > 0 && <DispatchDeadlineAlert tone="warning" date={addCalendarDays(today, 2)} onClick={onDispatchDeadline}><strong>2日後の未配車が{deadlines.twoDays.length}件あります</strong><span>できれば本日中に配車してください →</span></DispatchDeadlineAlert>}</div>{incomplete > 0 && <button type="button" className="incomplete-alert" onClick={onPastIncomplete}><strong>予約日を過ぎた未完了の予約が{incomplete}件あります</strong><span>要再配車・要対応を含みます。予約一覧で確認する →</span></button>}</>
 }
 
 function Metric({ label, value, note, tone }: { label: string; value: number; note: string; tone: string }) { return <article className={`metric ${tone}`}><span>{label}</span><strong>{value}<small>件</small></strong><p>{note}</p></article> }
 function DispatchMetric({ label, value, tone = '', onClick }: { label: string; value: number; tone?: string; onClick?: () => void }) { const content = <><span>{label}</span><strong>{value}<small>件</small></strong></>; return onClick ? <button type="button" className={`dispatch-metric ${tone}`} onClick={onClick}>{content}<b>一覧で確認 →</b></button> : <article className={`dispatch-metric ${tone}`}>{content}</article> }
+function DispatchDeadlineAlert({ tone, date, onClick, children }: { tone: 'warning' | 'danger'; date: string; onClick: (date: string) => void; children: ReactNode }) { return <button type="button" className={`dispatch-deadline-alert ${tone}`} onClick={() => onClick(date)}>{children}</button> }
 
 type CalendarProps = { snapshot: DemoSnapshot; categoryId: CalendarCategoryId; month: string; selectedDate: string; today: string; onCategory: (id: CalendarCategoryId) => void; onMonth: (month: string) => void; onDate: (date: string) => void; onReservation: (reservation: Reservation) => void; onCreate: () => void; onRefresh: () => Promise<void>; onMessage: (text: string) => void }
 

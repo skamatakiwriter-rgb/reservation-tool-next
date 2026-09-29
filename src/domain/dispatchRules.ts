@@ -1,4 +1,5 @@
 import { categoryRequiresDispatch } from './categories'
+import { addCalendarDays } from './dateRules'
 import type { CollectionOutcome, DispatchAssignment, DispatchStatus, Vehicle } from './dispatchTypes'
 import type { Reservation } from './types'
 
@@ -14,6 +15,8 @@ export type DispatchDisplayState =
   | 'needsAttention'
   | 'allCollected'
   | 'dataError'
+
+export type DispatchDeadlineTiming = 'today' | 'tomorrow' | 'twoDays'
 
 const allowedDispatchTransitions: Readonly<Record<DispatchStatus, readonly DispatchStatus[]>> = {
   assigned: ['inProgress', 'completed', 'cancelled'],
@@ -43,6 +46,13 @@ export function requiredOutcomeFields(outcome: CollectionOutcome): ReadonlyArray
   if (outcome === 'partiallyCollected') return ['actualCollectionSummary', 'outcomeNotes']
   if (outcome === 'notCollected') return ['outcomeNotes']
   return []
+}
+
+export function dispatchDeadlineTiming(requestedDate: string, today: string): DispatchDeadlineTiming | undefined {
+  if (requestedDate === today) return 'today'
+  if (requestedDate === addCalendarDays(today, 1)) return 'tomorrow'
+  if (requestedDate === addCalendarDays(today, 2)) return 'twoDays'
+  return undefined
 }
 
 export function dispatchDisplayState(

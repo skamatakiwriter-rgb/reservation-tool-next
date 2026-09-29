@@ -196,6 +196,11 @@ footer p + p { margin-top: 6px; }
 .dispatch-metric { min-width: 0; padding: 13px 11px; display: flex; align-items: flex-start; flex-direction: column; color: #285873; background: #fff; border: 1px solid #d4e0e6; border-radius: 10px; text-align: left; }
 .dispatch-metric > span { font-size: .69rem; font-weight: 900; }.dispatch-metric strong { margin-top: 6px; color: var(--ink); font-size: 1.35rem; }.dispatch-metric strong small { margin-left: 2px; font-size: .62rem; }.dispatch-metric b { margin-top: 7px; color: #5a7180; font-size: .6rem; }
 .dispatch-metric.warning { color: #7b5719; background: #fffaec; border-color: #e8d49d; }.dispatch-metric.danger { color: #8b4338; background: #fff4f1; border-color: #e5bab3; }.dispatch-summary button { cursor: pointer; }
+.dispatch-deadline-alerts { margin-top: 14px; display: grid; gap: 8px; }
+.dispatch-deadline-alert { width: 100%; padding: 14px 17px; display: flex; align-items: center; justify-content: space-between; gap: 16px; border-radius: 10px; text-align: left; cursor: pointer; }
+.dispatch-deadline-alert.warning { color: #704b15; background: #fff5db; border: 1px solid #e5c87e; }
+.dispatch-deadline-alert.danger { color: #843b32; background: #fff0ed; border: 1px solid #dfa9a1; }
+.dispatch-deadline-alert span { font-size: .77rem; }
 .metric { position: relative; overflow: hidden; padding: 19px; background: #fff; border: 1px solid #d9e2e7; border-radius: 13px; }
 .metric::before { content: ''; position: absolute; inset: 0 auto 0 0; width: 4px; background: var(--blue); }
 .metric.green::before { background: var(--green); }.metric.amber::before { background: #b07a23; }.metric.red::before { background: #a54c40; }
@@ -276,7 +281,7 @@ footer p + p { margin-top: 6px; }
   .admin-toolbar { align-items: flex-start; flex-direction: column; }.admin-toolbar-actions { justify-content: flex-start; }
   .admin-content { width: min(100% - 24px, 1440px); }.summary-cards { grid-template-columns: repeat(2, 1fr); }.metric { padding: 15px; }
   .dispatch-summary { grid-template-columns: repeat(2, 1fr); }
-  .incomplete-alert, .calendar-toolbar { align-items: flex-start; flex-direction: column; }.calendar-toolbar > div { width: 100%; flex-wrap: wrap; }
+  .incomplete-alert, .dispatch-deadline-alert, .calendar-toolbar { align-items: flex-start; flex-direction: column; }.calendar-toolbar > div { width: 100%; flex-wrap: wrap; }
   .admin-calendar-panel, .day-detail, .list-panel { padding: 14px; }.admin-month-grid { gap: 3px; }.admin-day { min-height: 58px; padding: 6px 4px; }
   .list-filters, .editor-grid, .detail-grid { grid-template-columns: 1fr; }.wide-filter, .editor-grid .editor-wide, .editor-grid .editor-check { grid-column: auto; }
   .reservation-table thead { display: none; }.reservation-table, .reservation-table tbody, .reservation-table tr, .reservation-table td { display: block; }.reservation-table tr { margin-bottom: 10px; padding: 11px; border: 1px solid var(--line); border-radius: 9px; }.reservation-table td { padding: 5px; border: 0; white-space: normal; }

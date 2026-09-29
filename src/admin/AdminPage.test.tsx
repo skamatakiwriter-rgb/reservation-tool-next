@@ -48,6 +48,18 @@ describe('管理者画面', () => {
     expect(within(editor).getByLabelText('希望日')).not.toHaveValue('')
   })
 
+  it('本日の未配車を至急警告し、対象日の未配車だけへ絞り込む', async () => {
+    renderPage()
+    await startAdmin()
+    fireEvent.click(screen.getByRole('button', { name: /本日の未配車が1件あります/ }))
+    expect(screen.getByLabelText('予約状態')).toHaveValue('confirmed')
+    expect(screen.getByLabelText('配車状況')).toHaveValue('unassigned')
+    expect(screen.getByLabelText('開始日')).toHaveValue('2026-09-18')
+    expect(screen.getByLabelText('終了日')).toHaveValue('2026-09-18')
+    expect(await screen.findByText('DEMO-009')).toBeInTheDocument()
+    expect(screen.queryByText('DEMO-014')).not.toBeInTheDocument()
+  })
+
   it('予約一覧を検索し、予約詳細と操作履歴を表示する', async () => {
     renderPage()
     await startAdmin()
@@ -64,7 +76,7 @@ describe('管理者画面', () => {
   it('予約状態と配車状況を別表示し、要再配車から対象予約を絞り込む', async () => {
     renderPage()
     await startAdmin()
-    fireEvent.click(screen.getByRole('button', { name: /要再配車/ }))
+    fireEvent.click(screen.getByRole('button', { name: /^要再配車/ }))
     expect(screen.getByRole('columnheader', { name: '予約状態' })).toBeInTheDocument()
     expect(screen.getByRole('columnheader', { name: '配車状況' })).toBeInTheDocument()
     expect(screen.getByLabelText('配車状況')).toHaveValue('needsRedispatch')

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { categoryRequiresDispatch } from './categories'
-import { canTransitionDispatch, dispatchDisplayState, isVehicleAvailableForDispatch, requiredOutcomeFields, timeRangesOverlap } from './dispatchRules'
+import { canTransitionDispatch, dispatchDeadlineTiming, dispatchDisplayState, isVehicleAvailableForDispatch, requiredOutcomeFields, timeRangesOverlap } from './dispatchRules'
 import type { DispatchAssignment, Vehicle } from './dispatchTypes'
 import type { Reservation } from './types'
 
@@ -42,6 +42,14 @@ describe('Ver2の純粋な配車規則', () => {
     expect(requiredOutcomeFields('allCollected')).toEqual([])
     expect(requiredOutcomeFields('partiallyCollected')).toEqual(['actualCollectionSummary', 'outcomeNotes'])
     expect(requiredOutcomeFields('notCollected')).toEqual(['outcomeNotes'])
+  })
+
+  it('未配車の期限警告を今日・明日・2日後に分ける', () => {
+    expect(dispatchDeadlineTiming('2026-09-28', '2026-09-28')).toBe('today')
+    expect(dispatchDeadlineTiming('2026-09-29', '2026-09-28')).toBe('tomorrow')
+    expect(dispatchDeadlineTiming('2026-09-30', '2026-09-28')).toBe('twoDays')
+    expect(dispatchDeadlineTiming('2026-10-01', '2026-09-28')).toBeUndefined()
+    expect(dispatchDeadlineTiming('2026-09-27', '2026-09-28')).toBeUndefined()
   })
 
   it('予約と配車の状態を分けて表示する', () => {
