@@ -194,7 +194,41 @@ function AdminCalendar(props: CalendarProps) {
 
 function AdminMonthGrid({ snapshot, month, categoryId, selectedDate, onDate }: { snapshot: DemoSnapshot; month: string; categoryId: CalendarCategoryId; selectedDate: string; onDate: (date: string) => void }) {
   const cells = monthCells(month)
-  return <div className="admin-month-grid" role="grid" aria-label={`${monthLabel(month)}の管理カレンダー`}>{['日','月','火','水','木','金','土'].map((day) => <span className="weekday" key={day}>{day}</span>)}{cells.map((date, index) => date ? (() => { const count = calendarReservationCount(snapshot.reservations, date, categoryId); const closed = categoryId ? snapshot.closures.some((item) => item.date === date && item.categoryId === categoryId && item.isClosed) : false; const limit = categoryId ? Number(snapshot.settings.find((item) => item.categoryId === categoryId)?.dailyLimit ?? 0) : undefined; return <button type="button" role="gridcell" className={`admin-day ${selectedDate === date ? 'selected' : ''} ${closed || limit === 0 ? 'closed' : ''} ${limit !== undefined && count > limit && limit > 0 ? 'over' : ''}`} key={date} onClick={() => onDate(date)}><span>{Number(date.slice(-2))}</span><small>{categoryId ? (closed || limit === 0 ? '停止' : `${count}/${String(limit)}件`) : `${count}件`}</small></button> })() : <span key={`blank-${index}`} />)}</div>
+  return <>
+    <div className="admin-month-grid" role="grid" aria-label={`${monthLabel(month)}の管理カレンダー`}>
+      {['日','月','火','水','木','金','土'].map((day) => <span className="weekday" key={day}>{day}</span>)}
+      {cells.map((date, index) => date ? (() => {
+        const count = calendarReservationCount(snapshot.reservations, date, categoryId)
+        const status = calendarDayStatus(snapshot, date, categoryId)
+        return <button type="button" role="gridcell" className={`admin-day ${selectedDate === date ? 'selected' : ''} ${categoryId && status.closedCount ? 'closed' : ''} ${categoryId && status.overCount ? 'over' : ''}`} key={date} onClick={() => onDate(date)}>
+          <span>{Number(date.slice(-2))}</span>
+          <small>{categoryId ? `${count}/${String(status.limit)}件` : `${count}件`}</small>
+          {(status.closedCount > 0 || status.overCount > 0) && <span className="admin-day-flags">
+            {status.closedCount > 0 && <span className="admin-day-flag closed">受付停止{categoryId ? '' : ` ${String(status.closedCount)}`}</span>}
+            {status.overCount > 0 && <span className="admin-day-flag over">上限超過{categoryId ? '' : ` ${String(status.overCount)}`}</span>}
+          </span>}
+        </button>
+      })() : <span key={`blank-${index}`} />)}
+    </div>
+    <div className="admin-calendar-legend" aria-label="カレンダーの状態表示説明"><span className="admin-day-flag closed">受付停止</span><span>受付できないカテゴリーあり</span><span className="admin-day-flag over">上限超過</span><span>予約数が設定上限を超過</span>{!categoryId && <small>数字は該当カテゴリー数</small>}</div>
+  </>
+}
+
+function calendarDayStatus(snapshot: DemoSnapshot, date: string, categoryId: CalendarCategoryId) {
+  const targetCategories = categoryId ? categories.filter((category) => category.id === categoryId) : categories
+  let closedCount = 0
+  let overCount = 0
+  let limit: number | undefined
+  for (const category of targetCategories) {
+    const categoryLimit = Number(snapshot.settings.find((item) => item.categoryId === category.id)?.dailyLimit ?? 0)
+    const explicitlyClosed = snapshot.closures.some((item) => item.date === date && item.categoryId === category.id && item.isClosed)
+    const closed = explicitlyClosed || (Boolean(categoryId) && categoryLimit === 0)
+    const count = countReservationsForCapacity(snapshot.reservations, date, category.id)
+    if (closed) closedCount++
+    if (categoryLimit > 0 && count > categoryLimit) overCount++
+    if (categoryId) limit = categoryLimit
+  }
+  return { closedCount, overCount, limit }
 }
 
 function ReservationList({ snapshot, filters, onFilters, onOpen }: { snapshot: DemoSnapshot; filters: ListFilters; onFilters: (filters: ListFilters) => void; onOpen: (reservation: Reservation) => void }) {
