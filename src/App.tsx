@@ -3,12 +3,14 @@ import './App.css'
 import { ReservePage } from './reserve/ReservePage'
 import { AdminPage } from './admin/AdminPage'
 import { DriverPage } from './driver/DriverPage'
+import { GuidePage } from './guide/GuidePage'
 
 const navItems = [
   { to: '/', label: 'デモ入口', end: true },
   { to: '/reserve', label: '利用者画面' },
   { to: '/admin', label: '予約・配車管理' },
   { to: '/driver', label: 'ドライバー画面' },
+  { to: '/guide', label: '使い方' },
 ]
 
 function AppShell() {
@@ -34,6 +36,7 @@ function AppShell() {
           <Route path="reserve" element={<ReservePage />} />
           <Route path="admin" element={<AdminPage />} />
           <Route path="driver" element={<DriverPage />} />
+          <Route path="guide" element={<GuidePage />} />
           <Route path="*" element={<NotFoundPage />} />
         </Routes>
       </main>
@@ -59,12 +62,13 @@ function EntryPage() {
           <span>実在する会社名・氏名・住所・電話番号は入力しないでください。</span>
         </div>
         <p className="storage-note">入力・操作したデータは、このブラウザの中だけに保存されます。</p>
+        <div className="guide-callout"><div><strong>初めて利用する方へ</strong><span>予約申込みから配車・回収完了までの確認手順を用意しています。</span></div><Link to="/guide">使い方ガイドを見る<span aria-hidden="true">→</span></Link></div>
       </section>
 
       <section className="route-grid" aria-label="デモ画面を選択">
         <RouteCard index="01 / Ver1" title="予約を申し込む" description="カテゴリーと希望日を選び、利用者として予約の申込みを試します。" to="/reserve" action="利用者画面へ" tone="green" />
         <RouteCard index="02 / Ver2" title="予約・配車を管理する" description="予約一覧から配車状況と回収状況を確認する管理画面です。" to="/admin" action="予約・配車管理へ" tone="blue" />
-        <RouteCard index="03 / Ver2" title="本日の担当を確認する" description="架空ドライバーを選び、担当案件と現場向け情報を確認します。" to="/driver" action="ドライバー画面へ" tone="orange" />
+        <RouteCard index="03 / Ver2" title="担当予定を確認する" description="架空ドライバーを選び、当日または指定期間の担当案件と現場向け情報を確認します。" to="/driver" action="ドライバー画面へ" tone="orange" />
       </section>
     </div>
   )

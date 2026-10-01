@@ -5,6 +5,7 @@ import { formatDate } from '../reserve/format'
 import { demoRepository, useDemoData } from '../reserve/useDemoData'
 import { publishDemoChange } from '../reserve/demoSync'
 import { CollectionOutcomeDialog, type CollectionOutcomeInput } from '../dispatch/CollectionOutcomeDialog'
+import { PageHelp } from '../guide/PageHelp'
 import './DriverPage.css'
 
 const dispatchLabels = { assigned: '配車済み', inProgress: '回収中', completed: '作業終了', cancelled: '配車取消' } as const
@@ -12,13 +13,22 @@ const dispatchLabels = { assigned: '配車済み', inProgress: '回収中', comp
 export function DriverPage() {
   const { snapshot, loading, error, refresh } = useDemoData('driver')
   const [driverId, setDriverId] = useState('')
-  const [date, setDate] = useState(todayInJapan())
+  const today = todayInJapan()
+  const [rangePreset, setRangePreset] = useState<'today' | 'tomorrow' | 'sevenDays' | 'custom'>('today')
+  const [fromDate, setFromDate] = useState(today)
+  const [toDate, setToDate] = useState(today)
   const [selectedDispatchId, setSelectedDispatchId] = useState<string>()
   const [message, setMessage] = useState<string>()
   const assignments = useMemo(() => {
     if (!snapshot || !driverId) return []
-    return snapshot.dispatchAssignments.filter((item) => item.primaryDriverId === driverId && item.plannedDate === date && (item.status === 'assigned' || item.status === 'inProgress')).sort((a, b) => a.plannedStartTime.localeCompare(b.plannedStartTime) || (reservationFor(snapshot.reservations, a)?.reservationCode ?? '').localeCompare(reservationFor(snapshot.reservations, b)?.reservationCode ?? ''))
-  }, [date, driverId, snapshot])
+    return snapshot.dispatchAssignments.filter((item) => item.primaryDriverId === driverId && item.plannedDate >= fromDate && item.plannedDate <= toDate && (item.status === 'assigned' || item.status === 'inProgress')).sort((a, b) => a.plannedDate.localeCompare(b.plannedDate) || a.plannedStartTime.localeCompare(b.plannedStartTime) || (reservationFor(snapshot.reservations, a)?.reservationCode ?? '').localeCompare(reservationFor(snapshot.reservations, b)?.reservationCode ?? ''))
+  }, [driverId, fromDate, snapshot, toDate])
+  const assignmentsByDate = useMemo(() => assignments.reduce((groups, assignment) => {
+    const group = groups.get(assignment.plannedDate) ?? []
+    group.push(assignment)
+    groups.set(assignment.plannedDate, group)
+    return groups
+  }, new Map<string, DispatchAssignment[]>()), [assignments])
   const selected = assignments.find((item) => item.dispatchId === selectedDispatchId)
   const selectedReservation = selected && snapshot ? reservationFor(snapshot.reservations, selected) : undefined
 
@@ -26,18 +36,33 @@ export function DriverPage() {
   if (error || !snapshot?.metadata) return <div className="page driver-page"><div className="error-summary" role="alert">{error ?? '担当データを読み込めませんでした。'}</div></div>
   const activeDrivers = snapshot.drivers.filter((item) => item.isActive)
   const selectedDriver = activeDrivers.find((item) => item.driverId === driverId)
+  const selectRange = (preset: 'today' | 'tomorrow' | 'sevenDays') => {
+    setRangePreset(preset)
+    const start = preset === 'tomorrow' ? addDays(today, 1) : today
+    setFromDate(start)
+    setToDate(preset === 'sevenDays' ? addDays(today, 6) : start)
+    setSelectedDispatchId(undefined)
+  }
+  const changeFromDate = (value: string) => {
+    setFromDate(value)
+    if (toDate < value || toDate > addDays(value, 30)) setToDate(value)
+    setSelectedDispatchId(undefined)
+  }
+  const rangeTitle = fromDate === toDate ? `${formatDate(fromDate)}の担当` : `${formatDate(fromDate)}～${formatDate(toDate)}の担当`
 
   return <div className="driver-page">
     <header className="driver-hero"><div><span className="driver-mode-badge">公開デモ版</span><h1>ドライバー担当画面</h1><p>担当案件と現場で必要な情報をスマートフォンから確認する想定の画面です。</p></div><Link to="/">デモ入口へ戻る</Link></header>
     <div className="driver-content">
       {message && <div className="driver-message" role="status">{message}<button type="button" aria-label="お知らせを閉じる" onClick={() => setMessage(undefined)}>×</button></div>}
       <div className="driver-demo-notice" role="note"><strong>デモ用の担当者選択です</strong><span>本番のログイン・本人確認を再現するものではありません。</span></div>
-      <section className="driver-controls" aria-label="担当者と表示日"><label>架空ドライバー<select value={driverId} onChange={(event) => { setDriverId(event.target.value); setSelectedDispatchId(undefined) }}><option value="">選択してください</option>{activeDrivers.map((driver) => <option value={driver.driverId} key={driver.driverId}>{driver.displayName}</option>)}</select></label><div className="driver-date-controls"><button type="button" onClick={() => { setDate(addDays(date, -1)); setSelectedDispatchId(undefined) }}>前日</button><label>表示日<input type="date" value={date} onChange={(event) => { setDate(event.target.value); setSelectedDispatchId(undefined) }} /></label><button type="button" onClick={() => { setDate(addDays(date, 1)); setSelectedDispatchId(undefined) }}>翌日</button></div></section>
-      {!selectedDriver ? <section className="driver-empty"><h2>担当ドライバーを選択してください</h2><p>選択すると、その日の担当案件が予定時刻順に表示されます。</p></section> : <div className="driver-layout">
-        <section className="driver-list" aria-label={`${selectedDriver.displayName}の担当案件`}><header><div><span>{selectedDriver.displayName}</span><h2>{formatDate(date)}の担当</h2></div><strong>{assignments.length}件</strong></header>{assignments.length === 0 ? <p className="driver-empty-list">この日の担当案件はありません。</p> : assignments.map((assignment) => {
+      <PageHelp title="この画面の使い方" anchor="driver" steps={['架空ドライバーを選びます。', '今日、明日、今後7日、または任意期間を選びます。', '担当案件を選んで現場情報を確認します。', '必要に応じて回収開始または作業結果を登録します。']} />
+      <section className="driver-controls" aria-label="担当者と表示期間"><label>架空ドライバー<select value={driverId} onChange={(event) => { setDriverId(event.target.value); setSelectedDispatchId(undefined) }}><option value="">選択してください</option>{activeDrivers.map((driver) => <option value={driver.driverId} key={driver.driverId}>{driver.displayName}</option>)}</select></label><div className="driver-range-controls" aria-label="表示期間"><div className="driver-range-presets"><button type="button" aria-pressed={rangePreset === 'today'} onClick={() => selectRange('today')}>今日</button><button type="button" aria-pressed={rangePreset === 'tomorrow'} onClick={() => selectRange('tomorrow')}>明日</button><button type="button" aria-pressed={rangePreset === 'sevenDays'} onClick={() => selectRange('sevenDays')}>今後7日</button><button type="button" aria-pressed={rangePreset === 'custom'} onClick={() => setRangePreset('custom')}>期間を指定</button></div>{rangePreset === 'custom' && <div className="driver-custom-range"><label>開始日<input type="date" value={fromDate} onChange={(event) => changeFromDate(event.target.value)} /></label><span aria-hidden="true">～</span><label>終了日<input type="date" min={fromDate} max={addDays(fromDate, 30)} value={toDate} onChange={(event) => { setToDate(event.target.value); setSelectedDispatchId(undefined) }} /></label></div>}<small>指定できる期間は最大31日です。</small></div></section>
+      {toDate > today && <p className="driver-future-notice">今後の予定は、配車変更により更新される場合があります。</p>}
+      {!selectedDriver ? <section className="driver-empty"><h2>担当ドライバーを選択してください</h2><p>選択すると、指定期間の担当案件が日付・予定時刻順に表示されます。</p></section> : <div className="driver-layout">
+        <section className="driver-list" aria-label={`${selectedDriver.displayName}の担当案件`}><header><div><span>{selectedDriver.displayName}</span><h2>{rangeTitle}</h2></div><strong>{assignments.length}件</strong></header>{assignments.length === 0 ? <p className="driver-empty-list">この期間の担当案件はありません。</p> : Array.from(assignmentsByDate, ([plannedDate, dailyAssignments]) => <section className={`driver-day-group ${plannedDate === today ? 'today' : ''}`} key={plannedDate}><h3>{formatDate(plannedDate)}{plannedDate === today ? '・今日' : ''}<span>{dailyAssignments.length}件</span></h3>{dailyAssignments.map((assignment) => {
           const reservation = reservationFor(snapshot.reservations, assignment); const vehicle = snapshot.vehicles.find((item) => item.vehicleId === assignment.vehicleId); if (!reservation) return null
           return <button type="button" className={`driver-job ${selectedDispatchId === assignment.dispatchId ? 'selected' : ''}`} key={assignment.dispatchId} onClick={() => setSelectedDispatchId(assignment.dispatchId)}><span className="driver-time">{assignment.plannedStartTime}–{assignment.plannedEndTime}</span><span className="driver-job-main"><strong>{reservation.companyName}</strong><small>{categoryName(reservation)}・{reservation.reservationCode}</small><small>{reservation.address || '指定回収先なし'}</small></span><span className={`dispatch-chip ${assignment.status}`}>{dispatchLabels[assignment.status]}</span>{assignment.needsReview && <span className="driver-warning">予約内容の変更あり</span>}{vehicle?.loadHold && <span className="driver-warning danger">車両保留中</span>}</button>
-        })}</section>
+        })}</section>)}</section>
         <section className="driver-detail" aria-live="polite">{selected && selectedReservation ? <DriverAssignmentDetail assignment={selected} reservation={selectedReservation} snapshot={snapshot} onRefresh={refresh} onMessage={setMessage} onCompleted={() => setSelectedDispatchId(undefined)} /> : <div className="driver-detail-empty"><h2>案件を選択してください</h2><p>依頼時申告、連絡事項、ドライバー向け指示を確認できます。</p></div>}</section>
       </div>}
     </div>

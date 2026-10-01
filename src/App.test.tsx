@@ -21,6 +21,7 @@ describe('主要URL', () => {
     expect(screen.getByRole('link', { name: /利用者画面へ/ })).toHaveAttribute('href', '/reserve')
     expect(screen.getByRole('link', { name: /予約・配車管理へ/ })).toHaveAttribute('href', '/admin')
     expect(screen.getByRole('link', { name: /ドライバー画面へ/ })).toHaveAttribute('href', '/driver')
+    expect(screen.getByRole('link', { name: /使い方ガイドを見る/ })).toHaveAttribute('href', '/guide')
     expect(screen.getByText(/本番の認証機能はなく、異なるブラウザや端末とはデータを共有しません/)).toBeInTheDocument()
   })
 
@@ -41,5 +42,13 @@ describe('主要URL', () => {
     expect(screen.getByLabelText('架空ドライバー')).toHaveValue('')
     expect(screen.getByText(/デモデータはこのブラウザ内に保存されます/)).toBeInTheDocument()
     expect(screen.getByText(/本番の認証機能はなく、異なるブラウザや端末とはデータを共有しません/)).toBeInTheDocument()
+  })
+
+  it('使い方ガイドを直接表示し、3画面の確認順序を案内する', () => {
+    renderAt('/guide')
+    expect(screen.getByRole('heading', { name: '使い方ガイド' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: '利用者画面' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: '予約・配車管理' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'ドライバー画面' })).toBeInTheDocument()
   })
 })

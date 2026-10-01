@@ -13,6 +13,7 @@ import { ReservationDatePicker } from './ReservationDatePicker'
 import { formatDate } from './format'
 import { demoRepository, useDemoData } from './useDemoData'
 import { publishDemoChange } from './demoSync'
+import { PageHelp } from '../guide/PageHelp'
 
 type Step = 'category' | 'input' | 'confirm' | 'complete'
 type ContactCarry = Pick<ReservationInput, 'companyName' | 'contactName' | 'phone' | 'address'>
@@ -132,6 +133,7 @@ export function ReservePage() {
         <h1>利用者用 予約申込み</h1>
         <p>カテゴリー選択、入力、確認、受付完了の順に申込みを進めます。</p>
       </header>
+      <PageHelp title="この画面の使い方" anchor="reserve" steps={['カテゴリーを選択します。', '希望日と依頼内容を入力します。', '入力内容を確認して申し込みます。']} />
       <StepIndicator step={step} />
       {loadError && <div className="error-summary" role="alert">{loadError}</div>}
       {loading && <section className="form-card"><p>予約状況を読み込んでいます…</p></section>}
