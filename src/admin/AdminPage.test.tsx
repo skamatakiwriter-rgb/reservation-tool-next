@@ -41,6 +41,16 @@ describe('管理者画面', () => {
     expect(within(calendar).getByText('受付停止 1')).toBeInTheDocument()
     expect(within(calendar).getByText('上限超過 1')).toBeInTheDocument()
     expect(screen.getByLabelText('カレンダーの状態表示説明')).toHaveTextContent('数字は該当カテゴリー数')
+    fireEvent.click(within(calendar).getByText('受付停止 1'))
+    let categoryStatus = screen.getByRole('region', { name: 'カテゴリー別受付状況' })
+    let affectedCategory = within(categoryStatus).getByText('家具家財撤去').closest('article')!
+    expect(within(affectedCategory).getByText('受付停止')).toBeInTheDocument()
+    expect(within(affectedCategory).getByText('1 / 2件')).toBeInTheDocument()
+    fireEvent.click(within(calendar).getByText('上限超過 1'))
+    categoryStatus = screen.getByRole('region', { name: 'カテゴリー別受付状況' })
+    affectedCategory = within(categoryStatus).getByText('蛍光管持込').closest('article')!
+    expect(within(affectedCategory).getByText('上限超過')).toBeInTheDocument()
+    expect(within(affectedCategory).getByText('3 / 2件')).toBeInTheDocument()
     const category = screen.getByLabelText('カテゴリー')
     expect(category).toHaveValue('')
     fireEvent.change(category, { target: { value: 'kagu' } })

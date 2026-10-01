@@ -248,6 +248,15 @@ footer p + p { margin-top: 6px; }
 .day-actions { margin: 20px 0; padding: 15px 0; display: flex; flex-wrap: wrap; gap: 7px; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
 .day-actions button:first-child { color: #fff; background: var(--blue); }
 .day-actions p { width: 100%; margin: 4px 0 0; color: var(--muted); font-size: .72rem; }
+.day-category-status { margin-bottom: 22px; }
+.day-category-status h3 { margin: 0 0 8px; font-size: .92rem; }
+.day-category-status > div { border-top: 1px solid var(--line); }
+.category-availability-row { padding: 10px 0; display: flex; align-items: center; justify-content: space-between; gap: 10px; border-bottom: 1px solid var(--line); }
+.category-availability-row > span:first-child { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.category-availability-row strong { font-size: .77rem; }.category-availability-row small { color: var(--muted); font-size: .67rem; }
+.category-availability-badges { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 4px; }
+.category-availability-state { padding: 4px 6px; border-radius: 999px; font-size: .62rem; font-weight: 900; white-space: nowrap; }
+.category-availability-state.available { color: #245642; background: #def0e7; }.category-availability-state.full { color: #655015; background: #f6edc8; }.category-availability-state.closed { color: #6f4b12; background: #ffe3a0; }.category-availability-state.over { color: #7c3027; background: #ffd5cf; }
 .day-reservations h3 { margin: 0 0 12px; font-size: .92rem; }
 .reservation-row { width: 100%; padding: 12px 4px; display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 10px; background: #fff; border: 0; border-bottom: 1px solid var(--line); text-align: left; cursor: pointer; }
 .reservation-row > span:not(.reservation-status) { min-width: 0; display: flex; flex-direction: column; gap: 3px; }.reservation-row small { overflow: hidden; color: var(--muted); font-size: .68rem; text-overflow: ellipsis; white-space: nowrap; }.reservation-row b { color: var(--blue); font-size: .68rem; }

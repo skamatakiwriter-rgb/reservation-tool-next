@@ -158,6 +158,7 @@ function AdminCalendar(props: CalendarProps) {
   const setting = categoryId ? snapshot.settings.find((item) => item.categoryId === categoryId) : undefined
   const closure = categoryId ? snapshot.closures.find((item) => item.date === selectedDate && item.categoryId === categoryId) : undefined
   const count = calendarReservationCount(snapshot.reservations, selectedDate, categoryId)
+  const categoryStatuses = calendarCategoryStatuses(snapshot, selectedDate).filter((item) => !categoryId || item.categoryId === categoryId)
   const changeLimit = async () => {
     if (!categoryId || !setting) return
     const value = window.prompt('このカテゴリーの1日あたり上限を入力してください。0は受付停止です。', String(setting.dailyLimit))
@@ -186,6 +187,7 @@ function AdminCalendar(props: CalendarProps) {
       </div>
       <aside className="day-detail"><div className="day-detail-heading"><div><span>選択日</span><h2>{formatDate(selectedDate)}</h2><p>{categoryId ? categoryName(categoryId) : 'すべてのカテゴリー'}</p></div><span className={`availability-chip ${categoryId && (closure?.isClosed || Number(setting?.dailyLimit) === 0) ? 'closed' : ''}`}>{categoryId ? (closure?.isClosed || Number(setting?.dailyLimit) === 0 ? '受付停止' : `${count} / ${String(setting?.dailyLimit)}件`) : `${count}件`}</span></div>
         <div className="day-actions"><button type="button" onClick={props.onCreate}>電話受付を登録</button>{categoryId ? <><button type="button" onClick={changeLimit}>上限を変更</button><button type="button" onClick={toggleClosure}>{closure?.isClosed ? '受付停止を解除' : 'この日の受付を停止'}</button></> : <p>上限変更・受付停止はカテゴリーを選択すると操作できます。</p>}</div>
+        <section className="day-category-status" aria-label="カテゴリー別受付状況"><h3>カテゴリー別受付状況</h3><div>{categoryStatuses.map((status) => <article className="category-availability-row" key={status.categoryId}><span><strong>{status.name}</strong><small>{status.count} / {status.limit}件</small></span><span className="category-availability-badges">{status.closed && <span className="category-availability-state closed">受付停止</span>}{status.over && <span className="category-availability-state over">上限超過</span>}{!status.closed && !status.over && status.full && <span className="category-availability-state full">満枠</span>}{!status.closed && !status.over && !status.full && <span className="category-availability-state available">受付可</span>}</span></article>)}</div></section>
         <div className="day-reservations"><h3>この日の予約</h3>{selected.length === 0 ? <p className="empty-state">予約はありません。</p> : selected.map((item) => <button type="button" className="reservation-row" key={item.reservationId} onClick={() => props.onReservation(item)}><Status status={item.status} /><span><strong>{item.companyName}</strong><small>{categoryName(item.categoryId)}・{item.reservationCode}・{item.contactName}</small></span><b>詳細 →</b></button>)}</div>
       </aside>
     </section>
@@ -215,20 +217,24 @@ function AdminMonthGrid({ snapshot, month, categoryId, selectedDate, onDate }: {
 }
 
 function calendarDayStatus(snapshot: DemoSnapshot, date: string, categoryId: CalendarCategoryId) {
-  const targetCategories = categoryId ? categories.filter((category) => category.id === categoryId) : categories
-  let closedCount = 0
-  let overCount = 0
-  let limit: number | undefined
-  for (const category of targetCategories) {
-    const categoryLimit = Number(snapshot.settings.find((item) => item.categoryId === category.id)?.dailyLimit ?? 0)
-    const explicitlyClosed = snapshot.closures.some((item) => item.date === date && item.categoryId === category.id && item.isClosed)
-    const closed = explicitlyClosed || (Boolean(categoryId) && categoryLimit === 0)
-    const count = countReservationsForCapacity(snapshot.reservations, date, category.id)
-    if (closed) closedCount++
-    if (categoryLimit > 0 && count > categoryLimit) overCount++
-    if (categoryId) limit = categoryLimit
+  const statuses = calendarCategoryStatuses(snapshot, date).filter((item) => !categoryId || item.categoryId === categoryId)
+  return {
+    closedCount: statuses.filter((item) => item.explicitlyClosed || (Boolean(categoryId) && item.limit === 0)).length,
+    overCount: statuses.filter((item) => item.over).length,
+    limit: categoryId ? statuses[0]?.limit : undefined,
   }
-  return { closedCount, overCount, limit }
+}
+
+function calendarCategoryStatuses(snapshot: DemoSnapshot, date: string) {
+  return categories.map((category) => {
+    const limit = Number(snapshot.settings.find((item) => item.categoryId === category.id)?.dailyLimit ?? 0)
+    const explicitlyClosed = snapshot.closures.some((item) => item.date === date && item.categoryId === category.id && item.isClosed)
+    const count = countReservationsForCapacity(snapshot.reservations, date, category.id)
+    const closed = explicitlyClosed || limit === 0
+    const over = limit > 0 && count > limit
+    const full = limit > 0 && count === limit
+    return { categoryId: category.id, name: category.name, count, limit, explicitlyClosed, closed, over, full }
+  })
 }
 
 function ReservationList({ snapshot, filters, onFilters, onOpen }: { snapshot: DemoSnapshot; filters: ListFilters; onFilters: (filters: ListFilters) => void; onOpen: (reservation: Reservation) => void }) {
