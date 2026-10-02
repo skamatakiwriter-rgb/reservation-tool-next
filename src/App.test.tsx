@@ -22,6 +22,8 @@ describe('主要URL', () => {
     expect(screen.getByRole('link', { name: /予約・配車管理へ/ })).toHaveAttribute('href', '/admin')
     expect(screen.getByRole('link', { name: /ドライバー画面へ/ })).toHaveAttribute('href', '/driver')
     expect(screen.getByRole('link', { name: /使い方ガイドを見る/ })).toHaveAttribute('href', '/guide')
+    expect(screen.getByRole('link', { name: '保存データを管理する' })).toHaveAttribute('href', '/demo-data')
+    expect(screen.getByRole('link', { name: 'データ管理' })).toHaveAttribute('href', '/demo-data')
     expect(screen.getByText(/本番の認証機能はなく、異なるブラウザや端末とはデータを共有しません/)).toBeInTheDocument()
   })
 
@@ -51,5 +53,13 @@ describe('主要URL', () => {
     expect(screen.getByRole('heading', { name: '予約・配車管理' })).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: 'ドライバー管理' })).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: 'ドライバー画面' })).toBeInTheDocument()
+  })
+
+  it('共通のデモデータ管理画面を直接表示する', async () => {
+    renderAt('/demo-data')
+    expect(await screen.findByRole('heading', { name: 'デモデータ管理' })).toBeInTheDocument()
+    expect(await screen.findByRole('button', { name: '初期状態に戻す' })).toBeInTheDocument()
+    expect(await screen.findByRole('button', { name: 'デモデータを削除して入口へ戻る' })).toBeInTheDocument()
+    expect(screen.getByText(/利用者・管理者・ドライバーの全画面に反映/)).toBeInTheDocument()
   })
 })

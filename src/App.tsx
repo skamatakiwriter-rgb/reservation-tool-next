@@ -5,6 +5,7 @@ import { AdminPage } from './admin/AdminPage'
 import { DriverManagementPage } from './admin/DriverManagementPage'
 import { DriverPage } from './driver/DriverPage'
 import { GuidePage } from './guide/GuidePage'
+import { DemoDataPage } from './demo/DemoDataPage'
 
 const navItems = [
   { to: '/', label: 'デモ入口', end: true },
@@ -12,6 +13,7 @@ const navItems = [
   { to: '/admin', label: '予約・配車管理' },
   { to: '/driver', label: 'ドライバー画面' },
   { to: '/guide', label: '使い方' },
+  { to: '/demo-data', label: 'データ管理' },
 ]
 
 function AppShell() {
@@ -39,6 +41,7 @@ function AppShell() {
           <Route path="admin/drivers" element={<DriverManagementPage />} />
           <Route path="driver" element={<DriverPage />} />
           <Route path="guide" element={<GuidePage />} />
+          <Route path="demo-data" element={<DemoDataPage />} />
           <Route path="*" element={<NotFoundPage />} />
         </Routes>
       </main>
@@ -63,7 +66,7 @@ function EntryPage() {
           <strong>公開デモ版</strong>
           <span>実在する会社名・氏名・住所・電話番号は入力しないでください。</span>
         </div>
-        <p className="storage-note">入力・操作したデータは、このブラウザの中だけに保存されます。</p>
+        <p className="storage-note">入力・操作したデータは、このブラウザの中だけに保存されます。<Link to="/demo-data">保存データを管理する</Link></p>
         <div className="guide-callout"><div><strong>初めて利用する方へ</strong><span>予約申込みから配車・回収完了までの確認手順を用意しています。</span></div><Link to="/guide">使い方ガイドを見る<span aria-hidden="true">→</span></Link></div>
       </section>
 
