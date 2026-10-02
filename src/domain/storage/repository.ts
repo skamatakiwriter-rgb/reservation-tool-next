@@ -51,7 +51,7 @@ export type SaveResult =
   | { kind: 'versionConflict' | 'staleGeneration' | 'idempotencyConflict' | 'invalidTransition' | 'notFound' }
   | { kind: 'activeDispatchExists' | 'reservationNotDispatchable' | 'vehicleUnavailable' | 'vehicleOnHold' | 'driverUnavailable' | 'dispatchVersionConflict' | 'invalidDispatchTransition' | 'reviewRequired' | 'invalidOutcome' | 'vehicleHoldConflict' | 'vehicleVersionConflict' }
   | { kind: 'vehicleScheduleConflict' | 'driverScheduleConflict'; conflictingDispatchId: string }
-  | { kind: 'driverCodeConflict' | 'driverHasActiveDispatches' }
+  | { kind: 'driverHasActiveDispatches' }
   | { kind: 'storageFull' | 'storageUnavailable'; message: string }
 
 export type CreateReservationCommand = {
@@ -188,7 +188,6 @@ export type AddInternalNoteCommand = {
 
 export type DriverInput = {
   fullName: string
-  displayName: string
   notes?: string
 }
 
@@ -196,7 +195,6 @@ export type CreateDriverCommand = {
   generationId: string
   idempotencyKey: string
   actor: Actor
-  driverCode: string
   input: DriverInput
 }
 
@@ -1281,27 +1279,24 @@ export class ReservationRepository {
 
   private async createDriverUnsafe(command: CreateDriverCommand): Promise<SaveResult> {
     const database = await this.getDatabase()
-    const normalizedCode = command.driverCode.trim().toUpperCase()
     const input = normalizeDriverInput(command.input)
-    const requestFingerprint = fingerprint({ operation: 'createDriver', driverCode: normalizedCode, input })
+    const requestFingerprint = fingerprint({ operation: 'createDriver', input })
     const transaction = database.transaction(allStoreNames, 'readwrite')
     const done = transactionDone(transaction)
     const metadata = await this.getMetadata(transaction)
     if (!isCurrentGeneration(metadata, command.generationId)) return abortSave(transaction, done, { kind: 'staleGeneration' })
     const replay = await this.replayResult(transaction, metadata.generationId, command.idempotencyKey, requestFingerprint)
     if (replay) return abortSave(transaction, done, replay)
-    const errors = validateDriverInput(normalizedCode, input)
+    const errors = validateDriverInput(input)
     if (errors.length > 0) return abortValidation(transaction, done, errors)
     const drivers = await requestResult(transaction.objectStore(storeNames.drivers).getAll()) as Driver[]
-    if (drivers.some((driver) => driver.driverCode.toUpperCase() === normalizedCode)) {
-      return abortSave(transaction, done, { kind: 'driverCodeConflict' })
-    }
+    const driverCode = nextDriverCode(drivers)
 
     const now = this.now().toISOString()
     const driverId = this.createId()
     const driver: Driver = {
       driverId,
-      driverCode: normalizedCode,
+      driverCode,
       ...input,
       isActive: true,
       updatedAt: now,
@@ -1335,7 +1330,7 @@ export class ReservationRepository {
     const current = await requestResult(store.get(command.driverId)) as Driver | undefined
     if (!current) return abortSave(transaction, done, { kind: 'notFound' })
     if (current.version !== command.expectedVersion) return abortSave(transaction, done, { kind: 'versionConflict' })
-    const errors = validateDriverInput(current.driverCode, input)
+    const errors = validateDriverInput(input)
     if (errors.length > 0) return abortValidation(transaction, done, errors)
 
     const now = this.now().toISOString()
@@ -1579,28 +1574,30 @@ function reservationAuditValue(reservation: Reservation): Record<string, unknown
 function normalizeDriverInput(input: DriverInput): DriverInput {
   return {
     fullName: input.fullName.trim(),
-    displayName: input.displayName.trim(),
     notes: input.notes?.trim() || undefined,
   }
 }
 
-function validateDriverInput(driverCode: string, input: DriverInput): ValidationError[] {
+function validateDriverInput(input: DriverInput): ValidationError[] {
   const errors: ValidationError[] = []
-  if (!driverCode) errors.push({ field: 'driverCode', code: 'required', message: 'ドライバーコードを入力してください。' })
-  else if (!/^[A-Z0-9-]{1,30}$/.test(driverCode)) errors.push({ field: 'driverCode', code: 'format', message: 'ドライバーコードは30文字以内の半角英数字とハイフンで入力してください。' })
   if (!input.fullName) errors.push({ field: 'fullName', code: 'required', message: '氏名を入力してください。' })
   else if (input.fullName.length > 80) errors.push({ field: 'fullName', code: 'maxLength', message: '氏名は80文字以内で入力してください。' })
-  if (!input.displayName) errors.push({ field: 'displayName', code: 'required', message: '表示名を入力してください。' })
-  else if (input.displayName.length > 40) errors.push({ field: 'displayName', code: 'maxLength', message: '表示名は40文字以内で入力してください。' })
   if ((input.notes?.length ?? 0) > 500) errors.push({ field: 'notes', code: 'maxLength', message: '備考は500文字以内で入力してください。' })
   return errors
+}
+
+function nextDriverCode(drivers: Driver[]): string {
+  const largestNumber = drivers.reduce((largest, driver) => {
+    const suffix = driver.driverCode.match(/(\d+)$/)?.[1]
+    return suffix ? Math.max(largest, Number(suffix)) : largest
+  }, 0)
+  return `DRV-${String(largestNumber + 1).padStart(4, '0')}`
 }
 
 function driverAuditValue(driver: Driver): Record<string, unknown> {
   return {
     driverCode: driver.driverCode,
     fullName: driver.fullName,
-    displayName: driver.displayName,
     notes: driver.notes,
     isActive: driver.isActive,
     version: driver.version,

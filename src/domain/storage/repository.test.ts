@@ -337,20 +337,22 @@ describe('ReservationRepository', () => {
     repository.close()
   })
 
-  it('ドライバーを登録・編集・無効化し、コード重複と未完了配車を拒否する', async () => {
+  it('ドライバーコードを自動採番し、登録・編集・無効化と未完了配車の保護を行う', async () => {
     const repository = makeRepository()
     const initialized = await repository.ensureInitialized()
     const generationId = initialized.metadata.generationId
-    const created = await repository.createDriver({ generationId, idempotencyKey: 'driver-create', actor: 'demo-admin', driverCode: 'drv-demo-010', input: { fullName: '架空 四郎', displayName: '収集担当D', notes: '新人' } })
-    const duplicate = await repository.createDriver({ generationId, idempotencyKey: 'driver-duplicate', actor: 'demo-admin', driverCode: 'DRV-DEMO-010', input: { fullName: '別の架空氏名', displayName: '重複担当' } })
+    const created = await repository.createDriver({ generationId, idempotencyKey: 'driver-create', actor: 'demo-admin', input: { fullName: '架空 四郎', notes: '新人' } })
+    const second = await repository.createDriver({ generationId, idempotencyKey: 'driver-create-next', actor: 'demo-admin', input: { fullName: '架空 五郎' } })
     expect(created.kind).toBe('success')
-    expect(duplicate.kind).toBe('driverCodeConflict')
+    expect(second.kind).toBe('success')
 
-    const added = (await repository.snapshot()).drivers.find((driver) => driver.driverCode === 'DRV-DEMO-010')!
-    const updated = await repository.updateDriver({ generationId, idempotencyKey: 'driver-update', actor: 'demo-admin', driverId: added.driverId, expectedVersion: added.version, input: { fullName: '架空 四郎', displayName: '回収担当D', notes: '研修済み' } })
+    const afterCreate = await repository.snapshot()
+    const added = afterCreate.drivers.find((driver) => driver.driverCode === 'DRV-0004')!
+    expect(afterCreate.drivers.some((driver) => driver.driverCode === 'DRV-0005')).toBe(true)
+    const updated = await repository.updateDriver({ generationId, idempotencyKey: 'driver-update', actor: 'demo-admin', driverId: added.driverId, expectedVersion: added.version, input: { fullName: '架空 四郎（研修済み）', notes: '研修済み' } })
     expect(updated.kind).toBe('success')
     const edited = (await repository.snapshot()).drivers.find((driver) => driver.driverId === added.driverId)!
-    expect(edited).toMatchObject({ displayName: '回収担当D', notes: '研修済み', version: 2, isActive: true })
+    expect(edited).toMatchObject({ fullName: '架空 四郎（研修済み）', notes: '研修済み', version: 2, isActive: true })
 
     const deactivated = await repository.setDriverActive({ generationId, idempotencyKey: 'driver-disable', actor: 'demo-admin', driverId: edited.driverId, expectedVersion: edited.version, isActive: false })
     expect(deactivated.kind).toBe('success')

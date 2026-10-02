@@ -1,6 +1,6 @@
 import { useMemo, useState, type FormEvent } from 'react'
 import { Link } from 'react-router'
-import type { Driver, DriverInput, SaveResult } from '../domain'
+import { driverName, type Driver, type DriverInput, type SaveResult } from '../domain'
 import { PageHelp } from '../guide/PageHelp'
 import { publishDemoChange } from '../reserve/demoSync'
 import { demoRepository, useDemoData } from '../reserve/useDemoData'
@@ -27,7 +27,7 @@ export function DriverManagementPage() {
 
   const toggleActive = async (driver: Driver) => {
     const nextActive = !driver.isActive
-    if (!nextActive && !window.confirm(`${driver.displayName}を無効にします。未完了の配車がある場合は無効にできません。よろしいですか？`)) return
+    if (!nextActive && !window.confirm(`${driverName(driver)}を無効にします。未完了の配車がある場合は無効にできません。よろしいですか？`)) return
     const result = await demoRepository.setDriverActive({
       generationId: snapshot.metadata!.generationId,
       idempotencyKey: crypto.randomUUID(),
@@ -49,10 +49,10 @@ export function DriverManagementPage() {
       </header>
       <div className="driver-management-content">
         {message && <div className="admin-message" role="status">{message}<button type="button" aria-label="お知らせを閉じる" onClick={() => setMessage(undefined)}>×</button></div>}
-        <PageHelp title="この画面の使い方" anchor="driver-master" steps={['「ドライバーを登録」から新しい担当者を追加します。', '氏名や表示名を変更する場合は「編集」を選びます。', '退職・休職などで配車対象から外す場合は「無効にする」を選びます。']} />
+        <PageHelp title="この画面の使い方" anchor="driver-master" steps={['「ドライバーを登録」から氏名と必要な備考を入力します。コードは自動採番されます。', '氏名や備考を変更する場合は「編集」を選びます。', '退職・休職などで配車対象から外す場合は「無効にする」を選びます。']} />
         <section className="driver-master-panel" aria-labelledby="driver-master-title">
           <div className="driver-master-heading">
-            <div><h2 id="driver-master-title">登録ドライバー</h2><p>無効なドライバーも過去の配車記録には残ります。</p></div>
+            <div><h2 id="driver-master-title">登録ドライバー</h2><p>コードは登録時に自動採番されます。無効なドライバーも過去の配車記録には残ります。</p></div>
             <button type="button" className="button admin-primary" onClick={() => setEditor({ mode: 'create' })}>ドライバーを登録</button>
           </div>
           <div className="driver-master-options">
@@ -60,7 +60,7 @@ export function DriverManagementPage() {
             <span>有効 {snapshot.drivers.filter((driver) => driver.isActive).length}名 / 全{snapshot.drivers.length}名</span>
           </div>
           {drivers.length === 0 ? <p className="empty-state">表示できるドライバーがいません。</p> : (
-            <div className="driver-table-wrap"><table className="driver-table"><thead><tr><th>状態</th><th>ドライバーコード</th><th>氏名</th><th>表示名</th><th>備考</th><th>操作</th></tr></thead><tbody>{drivers.map((driver) => <tr key={driver.driverId}><td><span className={`driver-active-state ${driver.isActive ? 'active' : 'inactive'}`}>{driver.isActive ? '有効' : '無効'}</span></td><td><code>{driver.driverCode}</code></td><td>{driver.fullName || driver.displayName}</td><td>{driver.displayName}</td><td className="driver-notes">{driver.notes || '—'}</td><td><div className="driver-row-actions"><button type="button" onClick={() => setEditor({ mode: 'edit', driver })}>編集</button><button type="button" className={driver.isActive ? 'danger-button' : ''} onClick={() => void toggleActive(driver)}>{driver.isActive ? '無効にする' : '有効にする'}</button></div></td></tr>)}</tbody></table></div>
+            <div className="driver-table-wrap"><table className="driver-table"><thead><tr><th>状態</th><th>ドライバーコード</th><th>氏名</th><th>備考</th><th>操作</th></tr></thead><tbody>{drivers.map((driver) => <tr key={driver.driverId}><td><span className={`driver-active-state ${driver.isActive ? 'active' : 'inactive'}`}>{driver.isActive ? '有効' : '無効'}</span></td><td><code>{driver.driverCode}</code></td><td>{driverName(driver)}</td><td className="driver-notes">{driver.notes || '—'}</td><td><div className="driver-row-actions"><button type="button" onClick={() => setEditor({ mode: 'edit', driver })}>編集</button><button type="button" className={driver.isActive ? 'danger-button' : ''} onClick={() => void toggleActive(driver)}>{driver.isActive ? '無効にする' : '有効にする'}</button></div></td></tr>)}</tbody></table></div>
           )}
         </section>
       </div>
@@ -71,9 +71,7 @@ export function DriverManagementPage() {
 
 function DriverEditor({ state, generationId, onClose, onSaved }: { state: DriverEditorState; generationId: string; onClose: () => void; onSaved: (message: string, driverId?: string) => Promise<void> }) {
   const editing = state.mode === 'edit' ? state.driver : undefined
-  const [driverCode, setDriverCode] = useState(editing?.driverCode ?? '')
-  const [fullName, setFullName] = useState(editing?.fullName ?? editing?.displayName ?? '')
-  const [displayName, setDisplayName] = useState(editing?.displayName ?? '')
+  const [fullName, setFullName] = useState(editing ? driverName(editing) : '')
   const [notes, setNotes] = useState(editing?.notes ?? '')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string>()
@@ -83,10 +81,10 @@ function DriverEditor({ state, generationId, onClose, onSaved }: { state: Driver
     if (saving) return
     setSaving(true)
     setError(undefined)
-    const input: DriverInput = { fullName, displayName, notes }
+    const input: DriverInput = { fullName, notes }
     const result = editing
       ? await demoRepository.updateDriver({ generationId, idempotencyKey: crypto.randomUUID(), actor: 'demo-admin', driverId: editing.driverId, expectedVersion: editing.version, input })
-      : await demoRepository.createDriver({ generationId, idempotencyKey: crypto.randomUUID(), actor: 'demo-admin', driverCode, input })
+      : await demoRepository.createDriver({ generationId, idempotencyKey: crypto.randomUUID(), actor: 'demo-admin', input })
     if (isSuccess(result)) {
       await onSaved(editing ? 'ドライバー情報を更新しました。' : 'ドライバーを登録しました。', result.payload.driverId)
       return
@@ -95,7 +93,7 @@ function DriverEditor({ state, generationId, onClose, onSaved }: { state: Driver
     setSaving(false)
   }
 
-  return <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose() }}><section className="admin-modal driver-editor-modal" role="dialog" aria-modal="true" aria-labelledby="driver-editor-title"><header><div><span className="admin-mode-badge">ドライバーマスター</span><h2 id="driver-editor-title">{editing ? 'ドライバー情報を編集' : 'ドライバーを登録'}</h2><p>実在する個人情報は入力せず、架空データでお試しください。</p></div><button className="modal-close" type="button" aria-label="ドライバー編集を閉じる" onClick={onClose}>×</button></header><form onSubmit={(event) => void submit(event)}><div className="driver-editor-grid"><label>ドライバーコード<span>必須・半角英数字とハイフン</span><input aria-label="ドライバーコード" value={driverCode} maxLength={30} disabled={Boolean(editing)} onChange={(event) => setDriverCode(event.target.value.toUpperCase())} required /></label><label>氏名<span>必須・社内で管理する氏名</span><input aria-label="氏名" value={fullName} maxLength={80} onChange={(event) => setFullName(event.target.value)} required /></label><label>表示名<span>必須・配車画面とドライバー画面に表示</span><input aria-label="表示名" value={displayName} maxLength={40} onChange={(event) => setDisplayName(event.target.value)} required /></label><label className="driver-editor-wide">備考<span>任意・500文字以内</span><textarea aria-label="備考" value={notes} maxLength={500} rows={4} onChange={(event) => setNotes(event.target.value)} /></label></div>{editing && <p className="driver-code-note">将来の勤怠管理連携で同じ人物を識別できるよう、登録後のドライバーコードは変更できません。</p>}{error && <div className="error-summary" role="alert">{error}</div>}<div className="driver-editor-actions"><button type="button" onClick={onClose}>キャンセル</button><button type="submit" className="inline-primary" disabled={saving}>{saving ? '保存中…' : editing ? '変更を保存' : '登録する'}</button></div></form></section></div>
+  return <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose() }}><section className="admin-modal driver-editor-modal" role="dialog" aria-modal="true" aria-labelledby="driver-editor-title"><header><div><span className="admin-mode-badge">ドライバーマスター</span><h2 id="driver-editor-title">{editing ? 'ドライバー情報を編集' : 'ドライバーを登録'}</h2><p>実在する個人情報は入力せず、架空データでお試しください。</p></div><button className="modal-close" type="button" aria-label="ドライバー編集を閉じる" onClick={onClose}>×</button></header><form onSubmit={(event) => void submit(event)}><div className="driver-editor-grid"><label>氏名<span>必須・配車画面とドライバー画面にも表示</span><input aria-label="氏名" value={fullName} maxLength={80} onChange={(event) => setFullName(event.target.value)} required /></label><label className="driver-editor-wide">備考<span>任意・500文字以内</span><textarea aria-label="備考" value={notes} maxLength={500} rows={4} onChange={(event) => setNotes(event.target.value)} /></label></div><p className="driver-code-note">ドライバーコードは登録時に自動採番され、登録後も変更されません。</p>{error && <div className="error-summary" role="alert">{error}</div>}<div className="driver-editor-actions"><button type="button" onClick={onClose}>キャンセル</button><button type="submit" className="inline-primary" disabled={saving}>{saving ? '保存中…' : editing ? '変更を保存' : '登録する'}</button></div></form></section></div>
 }
 
 function isSuccess(result: SaveResult): result is Extract<SaveResult, { kind: 'success' | 'duplicateSuccess' }> {
@@ -106,7 +104,6 @@ function driverResultMessage(result: SaveResult, successMessage: string): string
   if (isSuccess(result)) return successMessage
   if (result.kind === 'validationError') return result.errors[0]?.message ?? '入力内容を確認してください。'
   const messages: Partial<Record<SaveResult['kind'], string>> = {
-    driverCodeConflict: '同じドライバーコードがすでに登録されています。',
     driverHasActiveDispatches: '未完了の配車が残っているため無効にできません。先に配車変更または配車取消を行ってください。',
     versionConflict: '別の画面でドライバー情報が更新されています。再読み込みしてから操作してください。',
     staleGeneration: 'デモデータが初期化されています。画面を再読み込みしてください。',

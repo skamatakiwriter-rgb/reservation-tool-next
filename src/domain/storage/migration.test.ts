@@ -92,7 +92,7 @@ describe('Ver1からVer2への保存データ移行', () => {
     expect(snapshot.auditLogs).toContainEqual(expect.objectContaining({ action: 'schemaMigrated', before: { schemaVersion: 1 }, after: { schemaVersion: 2 } }))
     expect(await repository.findOperationResult(legacy.metadata.generationId, 'preserved-key')).toEqual(legacy.idempotency)
     expect(snapshot.vehicles.map((item) => item.vehicleCode)).toEqual(['VEH-DEMO-001', 'VEH-DEMO-002', 'VEH-DEMO-003'])
-    expect(snapshot.drivers.map((item) => item.driverCode)).toEqual(['DRV-DEMO-001', 'DRV-DEMO-002', 'DRV-DEMO-003'])
+    expect(snapshot.drivers.map((item) => item.driverCode)).toEqual(['DRV-0001', 'DRV-0002', 'DRV-0003'])
     expect(snapshot.dispatchAssignments).toEqual([])
     expect(snapshot.internalNotes).toEqual([])
 

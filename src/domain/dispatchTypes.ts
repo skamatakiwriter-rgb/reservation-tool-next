@@ -32,12 +32,17 @@ export type Driver = {
   driverId: string
   driverCode: string
   fullName?: string
-  displayName: string
+  /** 旧データ読込用。新規登録・画面表示ではfullNameを使用する。 */
+  displayName?: string
   notes?: string
   isActive: boolean
   updatedAt?: string
   updatedBy?: Actor
   version: number
+}
+
+export function driverName(driver: Driver | undefined): string {
+  return driver?.fullName?.trim() || driver?.displayName?.trim() || '担当者不明'
 }
 
 export type DispatchReservationSnapshot = Pick<

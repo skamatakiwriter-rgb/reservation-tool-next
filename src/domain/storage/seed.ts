@@ -25,9 +25,9 @@ export function createVehicleSeed(): Vehicle[] {
 
 export function createDriverSeed(): Driver[] {
   return [
-    { driverId: 'demo-driver-001', driverCode: 'DRV-DEMO-001', fullName: '架空 太郎', displayName: '収集担当A', notes: '公開デモ用の架空ドライバー', isActive: true, version: 1 },
-    { driverId: 'demo-driver-002', driverCode: 'DRV-DEMO-002', fullName: '架空 次郎', displayName: '収集担当B', notes: '公開デモ用の架空ドライバー', isActive: true, version: 1 },
-    { driverId: 'demo-driver-003', driverCode: 'DRV-DEMO-003', fullName: '架空 三郎', displayName: '収集担当C', notes: '公開デモ用の架空ドライバー', isActive: true, version: 1 },
+    { driverId: 'demo-driver-001', driverCode: 'DRV-0001', fullName: '架空 太郎', notes: '公開デモ用の架空ドライバー', isActive: true, version: 1 },
+    { driverId: 'demo-driver-002', driverCode: 'DRV-0002', fullName: '架空 次郎', notes: '公開デモ用の架空ドライバー', isActive: true, version: 1 },
+    { driverId: 'demo-driver-003', driverCode: 'DRV-0003', fullName: '架空 三郎', notes: '公開デモ用の架空ドライバー', isActive: true, version: 1 },
   ]
 }
 
