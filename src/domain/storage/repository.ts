@@ -51,6 +51,7 @@ export type SaveResult =
   | { kind: 'versionConflict' | 'staleGeneration' | 'idempotencyConflict' | 'invalidTransition' | 'notFound' }
   | { kind: 'activeDispatchExists' | 'reservationNotDispatchable' | 'vehicleUnavailable' | 'vehicleOnHold' | 'driverUnavailable' | 'dispatchVersionConflict' | 'invalidDispatchTransition' | 'reviewRequired' | 'invalidOutcome' | 'vehicleHoldConflict' | 'vehicleVersionConflict' }
   | { kind: 'vehicleScheduleConflict' | 'driverScheduleConflict'; conflictingDispatchId: string }
+  | { kind: 'driverCodeConflict' | 'driverHasActiveDispatches' }
   | { kind: 'storageFull' | 'storageUnavailable'; message: string }
 
 export type CreateReservationCommand = {
@@ -183,6 +184,38 @@ export type AddInternalNoteCommand = {
   actor: Actor
   reservationId: string
   body: string
+}
+
+export type DriverInput = {
+  fullName: string
+  displayName: string
+  notes?: string
+}
+
+export type CreateDriverCommand = {
+  generationId: string
+  idempotencyKey: string
+  actor: Actor
+  driverCode: string
+  input: DriverInput
+}
+
+export type UpdateDriverCommand = {
+  generationId: string
+  idempotencyKey: string
+  actor: Actor
+  driverId: string
+  expectedVersion: number
+  input: DriverInput
+}
+
+export type SetDriverActiveCommand = {
+  generationId: string
+  idempotencyKey: string
+  actor: Actor
+  driverId: string
+  expectedVersion: number
+  isActive: boolean
 }
 
 type RepositoryOptions = {
@@ -1242,6 +1275,121 @@ export class ReservationRepository {
     return { kind: 'success', payload }
   }
 
+  async createDriver(command: CreateDriverCommand): Promise<SaveResult> {
+    return this.executeSave(() => this.createDriverUnsafe(command))
+  }
+
+  private async createDriverUnsafe(command: CreateDriverCommand): Promise<SaveResult> {
+    const database = await this.getDatabase()
+    const normalizedCode = command.driverCode.trim().toUpperCase()
+    const input = normalizeDriverInput(command.input)
+    const requestFingerprint = fingerprint({ operation: 'createDriver', driverCode: normalizedCode, input })
+    const transaction = database.transaction(allStoreNames, 'readwrite')
+    const done = transactionDone(transaction)
+    const metadata = await this.getMetadata(transaction)
+    if (!isCurrentGeneration(metadata, command.generationId)) return abortSave(transaction, done, { kind: 'staleGeneration' })
+    const replay = await this.replayResult(transaction, metadata.generationId, command.idempotencyKey, requestFingerprint)
+    if (replay) return abortSave(transaction, done, replay)
+    const errors = validateDriverInput(normalizedCode, input)
+    if (errors.length > 0) return abortValidation(transaction, done, errors)
+    const drivers = await requestResult(transaction.objectStore(storeNames.drivers).getAll()) as Driver[]
+    if (drivers.some((driver) => driver.driverCode.toUpperCase() === normalizedCode)) {
+      return abortSave(transaction, done, { kind: 'driverCodeConflict' })
+    }
+
+    const now = this.now().toISOString()
+    const driverId = this.createId()
+    const driver: Driver = {
+      driverId,
+      driverCode: normalizedCode,
+      ...input,
+      isActive: true,
+      updatedAt: now,
+      updatedBy: command.actor,
+      version: 1,
+    }
+    const payload: OperationResultPayload = { generationId: metadata.generationId, driverId, driverVersion: 1 }
+    transaction.objectStore(storeNames.drivers).add(driver)
+    transaction.objectStore(storeNames.auditLogs).add({ auditId: this.createId(), entityType: 'driver', entityId: driverId, action: 'created', after: driverAuditValue(driver), actor: command.actor, occurredAt: now } satisfies AuditLog)
+    transaction.objectStore(storeNames.idempotency).add(makeIdempotency(metadata.generationId, command.idempotencyKey, requestFingerprint, 'createDriver', payload, now, driverId))
+    transaction.objectStore(storeNames.metadata).put({ ...metadata, lastUsedAt: now, updatedAt: now })
+    await done
+    return { kind: 'success', payload }
+  }
+
+  async updateDriver(command: UpdateDriverCommand): Promise<SaveResult> {
+    return this.executeSave(() => this.updateDriverUnsafe(command))
+  }
+
+  private async updateDriverUnsafe(command: UpdateDriverCommand): Promise<SaveResult> {
+    const database = await this.getDatabase()
+    const input = normalizeDriverInput(command.input)
+    const requestFingerprint = fingerprint({ operation: 'updateDriver', driverId: command.driverId, expectedVersion: command.expectedVersion, input })
+    const transaction = database.transaction(allStoreNames, 'readwrite')
+    const done = transactionDone(transaction)
+    const metadata = await this.getMetadata(transaction)
+    if (!isCurrentGeneration(metadata, command.generationId)) return abortSave(transaction, done, { kind: 'staleGeneration' })
+    const replay = await this.replayResult(transaction, metadata.generationId, command.idempotencyKey, requestFingerprint)
+    if (replay) return abortSave(transaction, done, replay)
+    const store = transaction.objectStore(storeNames.drivers)
+    const current = await requestResult(store.get(command.driverId)) as Driver | undefined
+    if (!current) return abortSave(transaction, done, { kind: 'notFound' })
+    if (current.version !== command.expectedVersion) return abortSave(transaction, done, { kind: 'versionConflict' })
+    const errors = validateDriverInput(current.driverCode, input)
+    if (errors.length > 0) return abortValidation(transaction, done, errors)
+
+    const now = this.now().toISOString()
+    const updated: Driver = { ...current, ...input, updatedAt: now, updatedBy: command.actor, version: current.version + 1 }
+    const payload: OperationResultPayload = { generationId: metadata.generationId, driverId: updated.driverId, driverVersion: updated.version }
+    store.put(updated)
+    transaction.objectStore(storeNames.auditLogs).add({ auditId: this.createId(), entityType: 'driver', entityId: updated.driverId, action: 'updated', before: driverAuditValue(current), after: driverAuditValue(updated), actor: command.actor, occurredAt: now } satisfies AuditLog)
+    transaction.objectStore(storeNames.idempotency).add(makeIdempotency(metadata.generationId, command.idempotencyKey, requestFingerprint, 'updateDriver', payload, now, updated.driverId))
+    transaction.objectStore(storeNames.metadata).put({ ...metadata, lastUsedAt: now, updatedAt: now })
+    await done
+    return { kind: 'success', payload }
+  }
+
+  async setDriverActive(command: SetDriverActiveCommand): Promise<SaveResult> {
+    return this.executeSave(() => this.setDriverActiveUnsafe(command))
+  }
+
+  private async setDriverActiveUnsafe(command: SetDriverActiveCommand): Promise<SaveResult> {
+    const database = await this.getDatabase()
+    const requestFingerprint = fingerprint({ operation: 'setDriverActive', ...command })
+    const transaction = database.transaction(allStoreNames, 'readwrite')
+    const done = transactionDone(transaction)
+    const metadata = await this.getMetadata(transaction)
+    if (!isCurrentGeneration(metadata, command.generationId)) return abortSave(transaction, done, { kind: 'staleGeneration' })
+    const replay = await this.replayResult(transaction, metadata.generationId, command.idempotencyKey, requestFingerprint)
+    if (replay) return abortSave(transaction, done, replay)
+    const store = transaction.objectStore(storeNames.drivers)
+    const current = await requestResult(store.get(command.driverId)) as Driver | undefined
+    if (!current) return abortSave(transaction, done, { kind: 'notFound' })
+    if (current.version !== command.expectedVersion) return abortSave(transaction, done, { kind: 'versionConflict' })
+    if (current.isActive === command.isActive) {
+      const payload: OperationResultPayload = { generationId: metadata.generationId, driverId: current.driverId, driverVersion: current.version }
+      transaction.abort()
+      await ignoreAbort(done)
+      return { kind: 'success', payload }
+    }
+    if (!command.isActive) {
+      const assignments = await requestResult(transaction.objectStore(storeNames.dispatchAssignments).getAll()) as DispatchAssignment[]
+      if (assignments.some((assignment) => assignment.primaryDriverId === current.driverId && isActiveDispatch(assignment))) {
+        return abortSave(transaction, done, { kind: 'driverHasActiveDispatches' })
+      }
+    }
+
+    const now = this.now().toISOString()
+    const updated: Driver = { ...current, isActive: command.isActive, updatedAt: now, updatedBy: command.actor, version: current.version + 1 }
+    const payload: OperationResultPayload = { generationId: metadata.generationId, driverId: updated.driverId, driverVersion: updated.version }
+    store.put(updated)
+    transaction.objectStore(storeNames.auditLogs).add({ auditId: this.createId(), entityType: 'driver', entityId: updated.driverId, action: command.isActive ? 'activated' : 'deactivated', before: driverAuditValue(current), after: driverAuditValue(updated), actor: command.actor, occurredAt: now } satisfies AuditLog)
+    transaction.objectStore(storeNames.idempotency).add(makeIdempotency(metadata.generationId, command.idempotencyKey, requestFingerprint, 'setDriverActive', payload, now, updated.driverId))
+    transaction.objectStore(storeNames.metadata).put({ ...metadata, lastUsedAt: now, updatedAt: now })
+    await done
+    return { kind: 'success', payload }
+  }
+
   private async checkDispatchPlan(transaction: IDBTransaction, plan: DispatchPlanInput, excludeDispatchId?: string): Promise<SaveResult | undefined> {
     const errors = validateDispatchPlan(plan)
     if (errors.length > 0) return { kind: 'validationError', errors }
@@ -1426,4 +1574,35 @@ function makeIdempotency(generationId: string, idempotencyKey: string, requestFi
 
 function reservationAuditValue(reservation: Reservation): Record<string, unknown> {
   return { requestedDate: reservation.requestedDate, categoryId: reservation.categoryId, companyName: reservation.companyName, contactName: reservation.contactName, phoneDisplay: reservation.phoneDisplay, address: reservation.address, contactNotes: reservation.contactNotes, categoryAnswers: reservation.categoryAnswers, status: reservation.status }
+}
+
+function normalizeDriverInput(input: DriverInput): DriverInput {
+  return {
+    fullName: input.fullName.trim(),
+    displayName: input.displayName.trim(),
+    notes: input.notes?.trim() || undefined,
+  }
+}
+
+function validateDriverInput(driverCode: string, input: DriverInput): ValidationError[] {
+  const errors: ValidationError[] = []
+  if (!driverCode) errors.push({ field: 'driverCode', code: 'required', message: 'ドライバーコードを入力してください。' })
+  else if (!/^[A-Z0-9-]{1,30}$/.test(driverCode)) errors.push({ field: 'driverCode', code: 'format', message: 'ドライバーコードは30文字以内の半角英数字とハイフンで入力してください。' })
+  if (!input.fullName) errors.push({ field: 'fullName', code: 'required', message: '氏名を入力してください。' })
+  else if (input.fullName.length > 80) errors.push({ field: 'fullName', code: 'maxLength', message: '氏名は80文字以内で入力してください。' })
+  if (!input.displayName) errors.push({ field: 'displayName', code: 'required', message: '表示名を入力してください。' })
+  else if (input.displayName.length > 40) errors.push({ field: 'displayName', code: 'maxLength', message: '表示名は40文字以内で入力してください。' })
+  if ((input.notes?.length ?? 0) > 500) errors.push({ field: 'notes', code: 'maxLength', message: '備考は500文字以内で入力してください。' })
+  return errors
+}
+
+function driverAuditValue(driver: Driver): Record<string, unknown> {
+  return {
+    driverCode: driver.driverCode,
+    fullName: driver.fullName,
+    displayName: driver.displayName,
+    notes: driver.notes,
+    isActive: driver.isActive,
+    version: driver.version,
+  }
 }

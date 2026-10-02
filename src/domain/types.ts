@@ -103,6 +103,8 @@ export type OperationResultPayload = {
   noteId?: string
   vehicleId?: string
   vehicleVersion?: number
+  driverId?: string
+  driverVersion?: number
 }
 
 export type IdempotencyRecord = {

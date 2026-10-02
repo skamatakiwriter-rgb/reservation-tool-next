@@ -31,8 +31,12 @@ export type Vehicle = {
 export type Driver = {
   driverId: string
   driverCode: string
+  fullName?: string
   displayName: string
+  notes?: string
   isActive: boolean
+  updatedAt?: string
+  updatedBy?: Actor
   version: number
 }
 

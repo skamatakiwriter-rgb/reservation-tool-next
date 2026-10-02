@@ -2,6 +2,7 @@ import { Link, NavLink, Route, Routes } from 'react-router'
 import './App.css'
 import { ReservePage } from './reserve/ReservePage'
 import { AdminPage } from './admin/AdminPage'
+import { DriverManagementPage } from './admin/DriverManagementPage'
 import { DriverPage } from './driver/DriverPage'
 import { GuidePage } from './guide/GuidePage'
 
@@ -35,6 +36,7 @@ function AppShell() {
           <Route index element={<EntryPage />} />
           <Route path="reserve" element={<ReservePage />} />
           <Route path="admin" element={<AdminPage />} />
+          <Route path="admin/drivers" element={<DriverManagementPage />} />
           <Route path="driver" element={<DriverPage />} />
           <Route path="guide" element={<GuidePage />} />
           <Route path="*" element={<NotFoundPage />} />

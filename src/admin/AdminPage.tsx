@@ -102,7 +102,7 @@ function AdminWorkspace({ onExit }: { onExit: () => void }) {
     <div className="admin-page">
       <header className="admin-toolbar">
         <div><span className="admin-mode-badge">デモ管理者モード</span><h1>予約・配車管理</h1></div>
-        <div className="admin-toolbar-actions"><button type="button" onClick={reset}>初期状態に戻す</button><button type="button" onClick={onExit}>デモを終了する</button><button type="button" className="danger-link" onClick={deleteAndExit}>データを削除して終了</button></div>
+        <div className="admin-toolbar-actions"><Link className="toolbar-link" to="/admin/drivers">ドライバー管理</Link><button type="button" onClick={reset}>初期状態に戻す</button><button type="button" onClick={onExit}>デモを終了する</button><button type="button" className="danger-link" onClick={deleteAndExit}>データを削除して終了</button></div>
       </header>
       <div className="admin-content">
         {message && <div className="admin-message" role="status">{message}<button type="button" aria-label="お知らせを閉じる" onClick={() => setMessage(undefined)}>×</button></div>}
