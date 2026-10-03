@@ -49,7 +49,7 @@ export type SaveResult =
   | { kind: 'validationError'; errors: ValidationError[] }
   | { kind: 'capacityFull' | 'closed' | 'zeroLimit' | 'invalidSetting' | 'dateUnavailable' }
   | { kind: 'versionConflict' | 'staleGeneration' | 'idempotencyConflict' | 'invalidTransition' | 'notFound' }
-  | { kind: 'activeDispatchExists' | 'reservationNotDispatchable' | 'vehicleUnavailable' | 'vehicleOnHold' | 'driverUnavailable' | 'dispatchVersionConflict' | 'invalidDispatchTransition' | 'reviewRequired' | 'invalidOutcome' | 'vehicleHoldConflict' | 'vehicleVersionConflict' }
+  | { kind: 'activeDispatchExists' | 'reservationNotDispatchable' | 'vehicleUnavailable' | 'vehicleOnHold' | 'driverUnavailable' | 'dispatchVersionConflict' | 'invalidDispatchTransition' | 'invalidOutcome' | 'vehicleHoldConflict' | 'vehicleVersionConflict' }
   | { kind: 'vehicleScheduleConflict' | 'driverScheduleConflict'; conflictingDispatchId: string }
   | { kind: 'driverHasActiveDispatches' | 'vehicleRegistrationConflict' | 'vehicleHasActiveDispatches' | 'vehicleHasLoadHold' }
   | { kind: 'storageFull' | 'storageUnavailable'; message: string }
@@ -993,7 +993,6 @@ export class ReservationRepository {
     if (!current || current.reservationId !== reservation.reservationId) return abortSave(transaction, done, { kind: 'notFound' })
     if (current.version !== command.expectedDispatchVersion) return abortSave(transaction, done, { kind: 'dispatchVersionConflict' })
     if (current.status !== 'assigned') return abortSave(transaction, done, { kind: 'invalidDispatchTransition' })
-    if (current.needsReview) return abortSave(transaction, done, { kind: 'reviewRequired' })
     const related = await requestResult(assignmentStore.index('byReservationId').getAll(reservation.reservationId)) as DispatchAssignment[]
     if (related.some((item) => item.dispatchId !== current.dispatchId && isActiveDispatch(item))) {
       return abortSave(transaction, done, { kind: 'activeDispatchExists' })
@@ -1038,7 +1037,6 @@ export class ReservationRepository {
     if (!current || current.reservationId !== reservation.reservationId) return abortSave(transaction, done, { kind: 'notFound' })
     if (current.version !== command.expectedDispatchVersion) return abortSave(transaction, done, { kind: 'dispatchVersionConflict' })
     if (current.status !== 'assigned' && current.status !== 'inProgress') return abortSave(transaction, done, { kind: 'invalidDispatchTransition' })
-    if (current.status === 'assigned' && current.needsReview) return abortSave(transaction, done, { kind: 'reviewRequired' })
     const related = await requestResult(assignmentStore.index('byReservationId').getAll(reservation.reservationId)) as DispatchAssignment[]
     if (related.some((item) => item.dispatchId !== current.dispatchId && isActiveDispatch(item))) {
       return abortSave(transaction, done, { kind: 'activeDispatchExists' })

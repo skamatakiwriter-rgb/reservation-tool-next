@@ -98,16 +98,33 @@ describe('回収開始・作業結果の保存', () => {
     repository.close()
   })
 
-  it('必須メモ、要再確認、古い版、終了済み配車を拒否し、データを変えない', async () => {
+  it('必須メモ、古い版、終了済み配車を拒否し、データを変えない', async () => {
     const { repository, work, complete } = await setup()
     expect((await repository.completeDispatch(complete(11, 'partial-empty', 'partiallyCollected'))).kind).toBe('validationError')
     expect((await repository.completeDispatch(complete(11, 'not-empty', 'notCollected'))).kind).toBe('validationError')
     expect((await repository.completeDispatch({ ...complete(11, 'no-outcome', 'allCollected'), outcome: undefined as unknown as CompleteDispatchCommand['outcome'] })).kind).toBe('invalidOutcome')
-    expect((await repository.startDispatch(work(16, 'review-start'))).kind).toBe('reviewRequired')
-    expect((await repository.completeDispatch(complete(16, 'review-complete', 'allCollected'))).kind).toBe('reviewRequired')
     expect((await repository.startDispatch({ ...work(11, 'stale-start'), expectedDispatchVersion: 0 })).kind).toBe('dispatchVersionConflict')
     expect((await repository.completeDispatch(complete(13, 'completed-again', 'allCollected'))).kind).toBe('reservationNotDispatchable')
     expect((await repository.snapshot()).dispatchAssignments.find((item) => item.dispatchId === 'demo-dispatch-011')?.status).toBe('assigned')
+    repository.close()
+  })
+
+  it('要再確認の配車でも回収開始でき、変更確認の表示状態を保持する', async () => {
+    const { repository, work } = await setup()
+    const result = await repository.startDispatch(work(16, 'review-start'))
+    expect(result.kind).toBe('success')
+    const assignment = (await repository.snapshot()).dispatchAssignments.find((item) => item.dispatchId === 'demo-dispatch-016')!
+    expect(assignment).toMatchObject({ status: 'inProgress', needsReview: true, version: 2 })
+    repository.close()
+  })
+
+  it('要再確認の配車でも開始記録なしで作業結果を登録できる', async () => {
+    const { repository, complete } = await setup()
+    const result = await repository.completeDispatch(complete(16, 'review-complete', 'allCollected'))
+    expect(result.kind).toBe('success')
+    const snapshot = await repository.snapshot()
+    expect(snapshot.reservations.find((item) => item.reservationId === 'demo-reservation-016')?.status).toBe('completed')
+    expect(snapshot.dispatchAssignments.find((item) => item.dispatchId === 'demo-dispatch-016')).toMatchObject({ status: 'completed', needsReview: true })
     repository.close()
   })
 

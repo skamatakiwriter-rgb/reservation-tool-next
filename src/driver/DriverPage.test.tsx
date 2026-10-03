@@ -52,13 +52,15 @@ describe('ドライバー画面', () => {
     fireEvent.change(screen.getByLabelText('終了日'), { target: { value: '2026-09-28' } })
     const list = screen.getByRole('region', { name: '架空 太郎の担当案件' })
     fireEvent.click(await within(list).findByRole('button', { name: /DEMO-016/ }))
-    expect(screen.getByText('予約内容に未確認の変更があります')).toBeInTheDocument()
+    expect(screen.getByText('予約内容が変更されています')).toBeInTheDocument()
+    expect(screen.getByText('赤い「要確認」が付いた項目を確認してください。')).toBeInTheDocument()
+    expect(screen.queryByText(/配車担当者へ連絡/)).not.toBeInTheDocument()
     const answerSection = screen.getByRole('heading', { name: /依頼時申告・目安/ }).parentElement!
     expect(within(answerSection).getByText('要確認')).toBeInTheDocument()
     expect(answerSection).toHaveTextContent('変更前：棚 1台')
     expect(answerSection).toHaveTextContent('現在：棚 2台')
-    expect(screen.getByRole('button', { name: '回収開始を記録' })).toBeDisabled()
-    expect(screen.getByRole('button', { name: '作業結果を登録' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: '回収開始を記録' })).toBeEnabled()
+    expect(screen.getByRole('button', { name: '作業結果を登録' })).toBeEnabled()
   })
 
   it('任意の回収開始を記録し、一部回収として今回の配車を終了できる', async () => {
