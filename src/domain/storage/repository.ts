@@ -2,7 +2,7 @@ import { evaluateAvailability } from '../availability'
 import { categoryRequiresDispatch } from '../categories'
 import { todayInJapan } from '../dateRules'
 import { timeRangesOverlap } from '../dispatchRules'
-import { snapshotForDispatch, type CollectionOutcome, type DispatchAssignment, type Driver, type InternalNote, type Vehicle } from '../dispatchTypes'
+import { snapshotForDispatch, type CollectionOutcome, type DispatchAssignment, type DispatchReservationSnapshot, type Driver, type InternalNote, type Vehicle } from '../dispatchTypes'
 import { validateCollectionOutcome, validateDispatchCancelReason, validateDispatchPlan, validateInternalNote, validateVehicleHoldReason, type DispatchPlanInput } from '../dispatchValidation'
 import { initialStatus, canTransition } from '../statusRules'
 import type {
@@ -321,6 +321,7 @@ export class ReservationRepository {
           occurredAt: now,
         } satisfies AuditLog)
       }
+      await this.backfillReservationChangeHistory(transaction)
       const updated = { ...current, schemaVersion: SCHEMA_VERSION, seedVersion: SEED_VERSION, lastUsedAt: now, updatedAt: now }
       metadataStore.put(updated)
       await done
@@ -721,12 +722,30 @@ export class ReservationRepository {
     const assignments = await requestResult(assignmentStore.index('byReservationId').getAll(current.reservationId)) as DispatchAssignment[]
     const activeAssignments = assignments.filter(isActiveDispatch)
     if (activeAssignments.length > 1) return abortResult(transaction, done, 'invalidTransition')
-    const importantChanged = fingerprint(snapshotForDispatch(current)) !== fingerprint(snapshotForDispatch(updated))
+    const beforeDispatchSnapshot = snapshotForDispatch(current)
+    const afterDispatchSnapshot = snapshotForDispatch(updated)
+    const importantChanged = fingerprint(beforeDispatchSnapshot) !== fingerprint(afterDispatchSnapshot)
     store.put(updated)
     transaction.objectStore(storeNames.auditLogs).add({ auditId: this.createId(), entityType: 'reservation', entityId: updated.reservationId, action: 'updated', before: reservationAuditValue(current), after: reservationAuditValue(updated), actor: command.actor, occurredAt: now } satisfies AuditLog)
     if (importantChanged && activeAssignments.length === 1) {
       const assignment = activeAssignments[0]
-      assignmentStore.put({ ...assignment, needsReview: true, updatedAt: now, updatedBy: command.actor, version: assignment.version + 1 } satisfies DispatchAssignment)
+      assignmentStore.put({
+        ...assignment,
+        reservationChangeHistory: [
+          ...(assignment.reservationChangeHistory ?? []),
+          {
+            changeId: `${assignment.dispatchId}-reservation-${updated.version}`,
+            reservationVersion: updated.version,
+            changedAt: now,
+            before: beforeDispatchSnapshot,
+            after: afterDispatchSnapshot,
+          },
+        ],
+        needsReview: true,
+        updatedAt: now,
+        updatedBy: command.actor,
+        version: assignment.version + 1,
+      } satisfies DispatchAssignment)
       transaction.objectStore(storeNames.auditLogs).add({
         auditId: this.createId(), entityType: 'dispatch', entityId: assignment.dispatchId, action: 'dispatchReviewRequired',
         before: { needsReview: assignment.needsReview, reservationVersion: current.version },
@@ -845,6 +864,7 @@ export class ReservationRepository {
       reservationSnapshotAtAssignment: snapshot,
       reservationVersionAtLastReview: reservation.version,
       reservationSnapshotAtLastReview: structuredClone(snapshot),
+      reservationChangeHistory: [],
       needsReview: false,
       driverInstructions: command.driverInstructions?.trim() || undefined,
       createdAt: now,
@@ -1251,10 +1271,24 @@ export class ReservationRepository {
     }
 
     const now = this.now().toISOString()
+    const currentSnapshot = snapshotForDispatch(reservation)
+    const currentHistory = current.reservationChangeHistory ?? []
+    const pendingChangeExists = fingerprint(current.reservationSnapshotAtLastReview) !== fingerprint(currentSnapshot)
+    const historyHasCurrentVersion = currentHistory.some((change) => change.reservationVersion === reservation.version)
+    const reservationChangeHistory = pendingChangeExists && !historyHasCurrentVersion
+      ? [...currentHistory, {
+          changeId: `${current.dispatchId}-reservation-${reservation.version}`,
+          reservationVersion: reservation.version,
+          changedAt: reservation.updatedAt,
+          before: current.reservationSnapshotAtLastReview,
+          after: currentSnapshot,
+        }]
+      : currentHistory
     const updated: DispatchAssignment = {
       ...current,
       reservationVersionAtLastReview: reservation.version,
-      reservationSnapshotAtLastReview: snapshotForDispatch(reservation),
+      reservationSnapshotAtLastReview: currentSnapshot,
+      reservationChangeHistory,
       needsReview: false,
       updatedAt: now,
       updatedBy: command.actor,
@@ -1549,6 +1583,35 @@ export class ReservationRepository {
     return undefined
   }
 
+  private async backfillReservationChangeHistory(transaction: IDBTransaction): Promise<void> {
+    const assignmentStore = transaction.objectStore(storeNames.dispatchAssignments)
+    const [assignments, auditLogs] = await Promise.all([
+      requestResult(assignmentStore.getAll()) as Promise<DispatchAssignment[]>,
+      requestResult(transaction.objectStore(storeNames.auditLogs).getAll()) as Promise<AuditLog[]>,
+    ])
+    for (const assignment of assignments) {
+      if (assignment.reservationChangeHistory !== undefined) continue
+      const history = auditLogs
+        .filter((audit) => audit.entityType === 'reservation'
+          && audit.entityId === assignment.reservationId
+          && audit.action === 'updated'
+          && audit.occurredAt >= assignment.createdAt)
+        .flatMap((audit, index) => {
+          const before = dispatchSnapshotFromAudit(audit.before)
+          const after = dispatchSnapshotFromAudit(audit.after)
+          if (!before || !after || fingerprint(before) === fingerprint(after)) return []
+          return [{
+            changeId: `${assignment.dispatchId}-legacy-${audit.auditId}`,
+            reservationVersion: assignment.reservationVersionAtAssignment + index + 1,
+            changedAt: audit.occurredAt,
+            before,
+            after,
+          }]
+        })
+      assignmentStore.put({ ...assignment, reservationChangeHistory: history })
+    }
+  }
+
   async findOperationResult(generationId: string, idempotencyKey: string): Promise<IdempotencyRecord | undefined> {
     const database = await this.getDatabase()
     const transaction = database.transaction(storeNames.idempotency, 'readonly')
@@ -1715,6 +1778,23 @@ function makeIdempotency(generationId: string, idempotencyKey: string, requestFi
 
 function reservationAuditValue(reservation: Reservation): Record<string, unknown> {
   return { requestedDate: reservation.requestedDate, categoryId: reservation.categoryId, companyName: reservation.companyName, contactName: reservation.contactName, phoneDisplay: reservation.phoneDisplay, address: reservation.address, contactNotes: reservation.contactNotes, categoryAnswers: reservation.categoryAnswers, status: reservation.status }
+}
+
+function dispatchSnapshotFromAudit(value: Record<string, unknown> | undefined): DispatchReservationSnapshot | undefined {
+  if (!value
+    || typeof value.requestedDate !== 'string'
+    || typeof value.categoryId !== 'string'
+    || (value.address !== undefined && typeof value.address !== 'string')
+    || typeof value.categoryAnswers !== 'object'
+    || value.categoryAnswers === null
+    || typeof value.contactNotes !== 'string') return undefined
+  return {
+    requestedDate: value.requestedDate,
+    categoryId: value.categoryId as DispatchReservationSnapshot['categoryId'],
+    address: value.address as string | undefined,
+    categoryAnswers: structuredClone(value.categoryAnswers as Record<string, unknown>),
+    contactNotes: value.contactNotes,
+  }
 }
 
 function normalizeVehicleInput(input: VehicleInput): VehicleInput {

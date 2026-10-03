@@ -58,6 +58,14 @@ export type DispatchReservationSnapshot = Pick<
   'requestedDate' | 'categoryId' | 'address' | 'categoryAnswers' | 'contactNotes'
 >
 
+export type DispatchReservationChange = {
+  changeId: string
+  reservationVersion: number
+  changedAt: string
+  before: DispatchReservationSnapshot
+  after: DispatchReservationSnapshot
+}
+
 export type DispatchAssignment = {
   dispatchId: string
   reservationId: string
@@ -72,6 +80,8 @@ export type DispatchAssignment = {
   reservationSnapshotAtAssignment: DispatchReservationSnapshot
   reservationVersionAtLastReview: number
   reservationSnapshotAtLastReview: DispatchReservationSnapshot
+  /** 配車後の重要変更。旧DBレコードとの互換性のため任意項目として扱う。 */
+  reservationChangeHistory?: DispatchReservationChange[]
   needsReview: boolean
   driverInstructions?: string
   startedAt?: string

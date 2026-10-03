@@ -74,6 +74,8 @@ describe('Ver2完全初期データ', () => {
     expect(assignment.reservationVersionAtAssignment).toBe(1)
     expect(seed.reservations[15].version).toBe(2)
     expect(assignment.reservationSnapshotAtLastReview.categoryAnswers).not.toEqual(seed.reservations[15].categoryAnswers)
+    expect(assignment.reservationChangeHistory).toHaveLength(1)
+    expect(assignment.reservationChangeHistory?.[0]).toMatchObject({ reservationVersion: 2, before: { categoryAnswers: { itemsAndQuantities: '棚 1台' } }, after: { categoryAnswers: { itemsAndQuantities: '棚 2台' } } })
     expect(seed.vehicles.find((item) => item.vehicleId === 'demo-vehicle-003')?.loadHold?.status).toBe('storedOnVehicle')
     expect(seed.auditLogs.some((item) => item.action === 'updated' && item.entityId === 'demo-reservation-016')).toBe(true)
     expect(seed.auditLogs.some((item) => item.entityType === 'internalNote' && 'body' in (item.after ?? {}))).toBe(false)

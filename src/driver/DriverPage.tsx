@@ -5,9 +5,10 @@ import { formatDate } from '../reserve/format'
 import { demoRepository, useDemoData } from '../reserve/useDemoData'
 import { publishDemoChange } from '../reserve/demoSync'
 import { CollectionOutcomeDialog, type CollectionOutcomeInput } from '../dispatch/CollectionOutcomeDialog'
-import { dispatchReviewFields, type DispatchReviewField, type DispatchReviewFieldKey } from '../dispatch/dispatchReviewPresentation'
+import { dispatchChangeHistory, dispatchReviewFields, type DispatchChangeHistoryItem, type DispatchReviewField, type DispatchReviewFieldKey } from '../dispatch/dispatchReviewPresentation'
 import { PageHelp } from '../guide/PageHelp'
 import './DriverPage.css'
+import './DriverChangeHistory.css'
 
 const dispatchLabels = { assigned: '配車済み', inProgress: '回収中', completed: '作業終了', cancelled: '配車取消' } as const
 
@@ -79,6 +80,7 @@ function DriverAssignmentDetail({ assignment, reservation, snapshot, onRefresh, 
   const actor = `demo-driver:${assignment.primaryDriverId}` as const
   const blockedByVehicle = Boolean(vehicle?.loadHold)
   const reviewFields = assignment.needsReview ? dispatchReviewFields(reservation, assignment) : []
+  const changeHistory = dispatchChangeHistory(reservation, assignment)
   const reviewField = (key: DispatchReviewFieldKey) => reviewFields.find((item) => item.key === key)
   const start = async () => {
     if (!window.confirm(`${reservation.reservationCode}の回収開始を記録します。開始後は通常の配車変更ができません。`)) return
@@ -96,13 +98,26 @@ function DriverAssignmentDetail({ assignment, reservation, snapshot, onRefresh, 
   const requestedDateChange = reviewField('requestedDate')
   const answerChange = reviewField('categoryAnswers')
   const contactNotesChange = reviewField('contactNotes')
-  return <><div className="driver-detail-heading"><div><span>{reservation.reservationCode}</span><h2>{reservation.companyName}</h2></div><span className={`dispatch-chip ${assignment.status}`}>{dispatchLabels[assignment.status]}</span></div>{actionError && <div className="error-summary" role="alert">{actionError}</div>}{assignment.needsReview && <div className="driver-alert"><strong>予約内容が変更されています</strong><span>赤い「要確認」が付いた項目を確認してください。</span></div>}{vehicle?.loadHold && <div className="driver-alert danger"><strong>{vehicleName(vehicle)}は{vehicle.loadHold.status === 'decisionPending' ? '搬入判断待ち' : '積み置き中'}です</strong><span>この画面では変更せず、配車担当者へ連絡してください。</span></div>}<dl className="driver-detail-grid"><Detail label="予定日時" value={`${formatDate(assignment.plannedDate)} ${assignment.plannedStartTime}–${assignment.plannedEndTime}`} />{requestedDateChange && <Detail label="予約希望日" value={formatDate(reservation.requestedDate)} reviewChange={requestedDateChange} />}<Detail label="担当車両" value={vehicle ? vehicleName(vehicle) : '車両情報なし'} /><Detail label="担当者" value={reservation.contactName} /><Detail label="電話番号" value={reservation.phoneDisplay} /><Detail label="回収先" value={reservation.address || '指定回収先なし'} reviewChange={reviewField('address')} /><Detail label="カテゴリー" value={categoryName(reservation)} />{assignment.startedAt && <Detail label="回収開始" value={formatDateTime(assignment.startedAt)} />}</dl><ReviewInformation title="依頼時申告・目安" value={answerValue(reservation)} reviewChange={answerChange}><small>依頼者から受付時に申告された内容です。実際の回収量と異なる場合があります。</small></ReviewInformation><ReviewInformation title="顧客からの連絡事項" value={reservation.contactNotes || 'なし'} reviewChange={contactNotesChange} /><section className="driver-information instructions"><h3>ドライバー向け指示</h3><p>{assignment.driverInstructions || '指示はありません。'}</p></section><div className="driver-work-actions">{assignment.status === 'assigned' && <button type="button" disabled={starting || blockedByVehicle} onClick={start}>{starting ? '記録中…' : '回収開始を記録'}</button>}<button type="button" disabled={blockedByVehicle} onClick={() => setOutcomeOpen(true)}>作業結果を登録</button>{assignment.status === 'assigned' && <p>開始記録は任意です。記録しなくても作業結果を登録できます。</p>}<p>同日・同じ車両・同じ主担当ドライバーで回収を続ける場合は、ここでは何も操作しません。</p></div>{outcomeOpen && <CollectionOutcomeDialog reservation={reservation} assignment={assignment} vehicleName={vehicleName(vehicle)} driverName={driverName(driver)} allowVehicleHold={false} onClose={() => setOutcomeOpen(false)} onSubmit={complete} />}</>
+  return <>
+    <div className="driver-detail-heading"><div><span>{reservation.reservationCode}</span><h2>{reservation.companyName}</h2></div><span className={`dispatch-chip ${assignment.status}`}>{dispatchLabels[assignment.status]}</span></div>
+    {actionError && <div className="error-summary" role="alert">{actionError}</div>}
+    {assignment.needsReview && <div className="driver-alert"><strong>予約内容が変更されています</strong><span>赤い「要確認」が付いた項目を確認してください。</span></div>}
+    {vehicle?.loadHold && <div className="driver-alert danger"><strong>{vehicleName(vehicle)}は{vehicle.loadHold.status === 'decisionPending' ? '搬入判断待ち' : '積み置き中'}です</strong><span>この画面では変更せず、配車担当者へ連絡してください。</span></div>}
+    <dl className="driver-detail-grid"><Detail label="予定日時" value={`${formatDate(assignment.plannedDate)} ${assignment.plannedStartTime}–${assignment.plannedEndTime}`} />{requestedDateChange && <Detail label="予約希望日" value={formatDate(reservation.requestedDate)} reviewChange={requestedDateChange} />}<Detail label="担当車両" value={vehicle ? vehicleName(vehicle) : '車両情報なし'} /><Detail label="担当者" value={reservation.contactName} /><Detail label="電話番号" value={reservation.phoneDisplay} /><Detail label="回収先" value={reservation.address || '指定回収先なし'} reviewChange={reviewField('address')} /><Detail label="カテゴリー" value={categoryName(reservation)} />{assignment.startedAt && <Detail label="回収開始" value={formatDateTime(assignment.startedAt)} />}</dl>
+    <ReviewInformation title="依頼時申告・目安" value={answerValue(reservation)} reviewChange={answerChange}><small>依頼者から受付時に申告された内容です。実際の回収量と異なる場合があります。</small></ReviewInformation>
+    <ReviewInformation title="顧客からの連絡事項" value={reservation.contactNotes || 'なし'} reviewChange={contactNotesChange} />
+    <section className="driver-information instructions"><h3>ドライバー向け指示</h3><p>{assignment.driverInstructions || '指示はありません。'}</p></section>
+    {changeHistory.length > 0 && <DriverChangeHistory changes={changeHistory} pending={assignment.needsReview} />}
+    <div className="driver-work-actions">{assignment.status === 'assigned' && <button type="button" disabled={starting || blockedByVehicle} onClick={start}>{starting ? '記録中…' : '回収開始を記録'}</button>}<button type="button" disabled={blockedByVehicle} onClick={() => setOutcomeOpen(true)}>作業結果を登録</button>{assignment.status === 'assigned' && <p>開始記録は任意です。記録しなくても作業結果を登録できます。</p>}<p>同日・同じ車両・同じ主担当ドライバーで回収を続ける場合は、ここでは何も操作しません。</p></div>
+    {outcomeOpen && <CollectionOutcomeDialog reservation={reservation} assignment={assignment} vehicleName={vehicleName(vehicle)} driverName={driverName(driver)} allowVehicleHold={false} onClose={() => setOutcomeOpen(false)} onSubmit={complete} />}
+  </>
 }
 
 function Detail({ label, value, reviewChange }: { label: string; value: string; reviewChange?: DispatchReviewField }) { return <div className={reviewChange ? 'driver-review-field' : ''}><dt>{label}{reviewChange && <ReviewBadge />}</dt>{reviewChange ? <ReviewComparison change={reviewChange} /> : <dd>{value}</dd>}</div> }
 function ReviewInformation({ title, value, reviewChange, children }: { title: string; value: string; reviewChange?: DispatchReviewField; children?: ReactNode }) { return <section className={`driver-information ${reviewChange ? 'driver-review-field' : ''}`}><h3>{title}{reviewChange && <ReviewBadge />}</h3>{reviewChange ? <ReviewComparison change={reviewChange} /> : <p>{value}</p>}{children}</section> }
 function ReviewBadge() { return <span className="driver-review-badge">要確認</span> }
 function ReviewComparison({ change }: { change: DispatchReviewField }) { return <div className="driver-review-comparison"><span>変更前：<s>{change.before}</s></span><strong>現在：{change.after}</strong></div> }
+function DriverChangeHistory({ changes, pending }: { changes: DispatchChangeHistoryItem[]; pending: boolean }) { return <section className="driver-change-history" aria-label="配車後の変更履歴"><div className="driver-change-history-heading"><div><h3>配車後の変更履歴</h3><p>{pending ? '未確認の変更があります。現在の内容とあわせて確認してください。' : '管理者が確認した後も、変更履歴は残ります。'}</p></div><span>{changes.length}件</span></div>{changes.map((change, index) => <details className="driver-change-event" key={change.changeId} open={index === 0}><summary><strong>{index === 0 ? '最新の変更' : `${changes.length - index}件目の変更`}</strong><span>{formatDateTime(change.changedAt)}</span></summary><dl>{change.fields.map((field) => <div key={field.key}><dt>{field.label}</dt><dd><span>{field.before}</span><b aria-hidden="true">→</b><strong>{field.after}</strong></dd></div>)}</dl></details>)}</section> }
 function reservationFor(reservations: Reservation[], assignment: DispatchAssignment) { return reservations.find((item) => item.reservationId === assignment.reservationId) }
 function categoryName(reservation: Reservation) { return categories.find((item) => item.id === reservation.categoryId)?.name ?? reservation.categoryId }
 function answerValue(reservation: Reservation) { return reservation.categoryId === 'keikoukan' ? `おおよそ${String(reservation.categoryAnswers.approximateTubeCount)}本` : String(reservation.categoryAnswers[reservation.categoryId === 'kagu' ? 'itemsAndQuantities' : 'typesAndQuantities']) }

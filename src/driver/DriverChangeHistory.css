@@ -1,0 +1,107 @@
+.driver-change-history {
+  margin-top: 1rem;
+  padding: 1rem;
+  border: 1px solid #c8d9e2;
+  border-radius: 14px;
+  background: #f7fafc;
+}
+
+.driver-change-history-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 0.75rem;
+}
+
+.driver-change-history-heading h3,
+.driver-change-history-heading p {
+  margin: 0;
+}
+
+.driver-change-history-heading p {
+  margin-top: 0.3rem;
+  color: #50656f;
+  font-size: 0.88rem;
+  line-height: 1.55;
+}
+
+.driver-change-history-heading > span {
+  flex: none;
+  padding: 0.2rem 0.55rem;
+  border-radius: 999px;
+  background: #dcebf2;
+  color: #24566e;
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.driver-change-event {
+  border-top: 1px solid #d7e3e9;
+}
+
+.driver-change-event summary {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.8rem 0;
+  cursor: pointer;
+  color: #163d4d;
+}
+
+.driver-change-event summary span {
+  color: #667b84;
+  font-size: 0.82rem;
+  font-weight: 400;
+}
+
+.driver-change-event dl {
+  margin: 0 0 0.85rem;
+}
+
+.driver-change-event dl > div {
+  display: grid;
+  grid-template-columns: minmax(6.5rem, 0.35fr) 1fr;
+  gap: 0.75rem;
+  padding: 0.65rem 0.75rem;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.driver-change-event dl > div + div {
+  margin-top: 0.45rem;
+}
+
+.driver-change-event dt {
+  color: #47616c;
+  font-size: 0.88rem;
+  font-weight: 700;
+}
+
+.driver-change-event dd {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  margin: 0;
+}
+
+.driver-change-event dd span {
+  color: #6c7b82;
+}
+
+.driver-change-event dd strong {
+  color: #173d4c;
+}
+
+@media (max-width: 620px) {
+  .driver-change-history-heading,
+  .driver-change-event summary {
+    flex-direction: column;
+    gap: 0.3rem;
+  }
+
+  .driver-change-event dl > div {
+    grid-template-columns: 1fr;
+    gap: 0.3rem;
+  }
+}

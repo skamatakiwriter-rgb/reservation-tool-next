@@ -86,7 +86,17 @@ export function createSeedData(today: string, now: string, generationId: string)
     makeDispatch(13, byNumber(13), 'demo-vehicle-001', 'demo-driver-001', now, 'completed', 'allCollected'),
     makeDispatch(14, byNumber(14), 'demo-vehicle-002', 'demo-driver-002', now, 'completed', 'partiallyCollected'),
     makeDispatch(15, byNumber(15), 'demo-vehicle-001', 'demo-driver-001', now, 'completed', 'notCollected'),
-    { ...makeDispatch(16, reviewBeforeChange, 'demo-vehicle-001', 'demo-driver-001', now, 'assigned'), needsReview: true },
+    {
+      ...makeDispatch(16, reviewBeforeChange, 'demo-vehicle-001', 'demo-driver-001', now, 'assigned'),
+      reservationChangeHistory: [{
+        changeId: 'demo-dispatch-016-reservation-2',
+        reservationVersion: reviewReservation.version,
+        changedAt: reviewReservation.updatedAt,
+        before: snapshotForDispatch(reviewBeforeChange),
+        after: snapshotForDispatch(reviewReservation),
+      }],
+      needsReview: true,
+    },
     makeDispatch(17, byNumber(17), 'demo-vehicle-003', 'demo-driver-003', now, 'completed', 'allCollected'),
   ]
   const vehicles = createVehicleSeed(now)
@@ -249,6 +259,7 @@ function makeDispatch(
     reservationSnapshotAtAssignment: snapshot,
     reservationVersionAtLastReview: reservation.version,
     reservationSnapshotAtLastReview: structuredClone(snapshot),
+    reservationChangeHistory: [],
     needsReview: false,
     driverInstructions: '現場到着前に配車担当へ電話で確認',
     createdAt: minutesBefore(now, 3),
