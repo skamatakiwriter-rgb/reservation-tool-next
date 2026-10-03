@@ -43,6 +43,21 @@ describe('ドライバー画面', () => {
     expect(screen.getByText(/今後の予定は、配車変更により更新される場合があります/)).toBeInTheDocument()
   })
 
+  it('配車後の予約変更を管理画面と同じ差分で表示する', async () => {
+    render(<MemoryRouter><DriverPage /></MemoryRouter>)
+    const driverSelect = await screen.findByLabelText('架空ドライバー')
+    fireEvent.change(driverSelect, { target: { value: 'demo-driver-001' } })
+    fireEvent.click(screen.getByRole('button', { name: '期間を指定' }))
+    fireEvent.change(screen.getByLabelText('開始日'), { target: { value: '2026-09-28' } })
+    fireEvent.change(screen.getByLabelText('終了日'), { target: { value: '2026-09-28' } })
+    const list = screen.getByRole('region', { name: '架空 太郎の担当案件' })
+    fireEvent.click(await within(list).findByRole('button', { name: /DEMO-016/ }))
+    expect(screen.getByText('依頼時申告：棚 1台 → 棚 2台')).toBeInTheDocument()
+    expect(screen.getByText(/現在の依頼内容は画面へ反映済みです/)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '回収開始を記録' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: '作業結果を登録' })).toBeDisabled()
+  })
+
   it('任意の回収開始を記録し、一部回収として今回の配車を終了できる', async () => {
     render(<MemoryRouter><DriverPage /></MemoryRouter>)
     const driverSelect = await screen.findByLabelText('架空ドライバー')
