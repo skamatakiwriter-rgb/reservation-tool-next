@@ -109,7 +109,7 @@ function AdminWorkspace({ onExit }: { onExit: () => void }) {
       </header>
       <div className="admin-content">
         {message && <div className="admin-message" role="status">{message}<button type="button" aria-label="お知らせを閉じる" onClick={() => setMessage(undefined)}>×</button></div>}
-        <PageHelp title="この画面の使い方" anchor="admin" steps={['予約を選び、受付内容を確認します。', '受付状態の予約を確定します。', '確定した予約へ配車を登録します。', '必要に応じて配車変更や作業結果を登録します。']} />
+        <PageHelp title="この画面の使い方" anchor="admin" steps={['予約を選び、受付内容を確認します。', '受付状態の予約を確定します。', '確定した予約へ配車を登録します。', '数量を変えるときは「おおよその本数」「品目と数量」「種類とおおよその数量」の該当欄を書き換えます。連絡事項へ書いても数量欄は変わりません。', '配車を登録した後に希望日・回収先・依頼内容・連絡事項を変更すると、現在の配車のままでよいか確認する橙色の案内が表示されます。配車前の変更では表示されません。', '必要に応じて配車変更や作業結果を登録します。']} />
         <SummaryCards snapshot={snapshot} month={today.slice(0, 7)} today={today} onPastIncomplete={openPastIncomplete} onDispatchFilter={openDispatchFilter} onDispatchDeadline={openDispatchDeadline} />
         <nav className="admin-tabs" aria-label="管理画面の表示切替"><button className={view === 'calendar' ? 'active' : ''} type="button" onClick={() => setView('calendar')}>カレンダー</button><button className={view === 'list' ? 'active' : ''} type="button" onClick={() => setView('list')}>予約一覧</button></nav>
         {view === 'calendar' ? (

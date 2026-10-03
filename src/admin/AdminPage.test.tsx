@@ -23,6 +23,13 @@ async function startAdmin() {
 }
 
 describe('管理者画面', () => {
+  it('初めて使う人へ配車前後の変更表示と数量の入力先を案内する', async () => {
+    renderPage()
+    await startAdmin()
+    expect(screen.getByText(/連絡事項へ書いても数量欄は変わりません/)).toBeInTheDocument()
+    expect(screen.getByText(/配車前の変更では表示されません/)).toBeInTheDocument()
+  })
+
   it('初期表示月の予約を日付範囲内で一覧表示する', async () => {
     renderPage()
     await startAdmin()

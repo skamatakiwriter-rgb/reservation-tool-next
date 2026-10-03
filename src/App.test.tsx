@@ -55,6 +55,9 @@ describe('主要URL', () => {
     expect(screen.getByRole('heading', { name: 'ドライバー管理' })).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: '車両管理' })).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: 'ドライバー画面' })).toBeInTheDocument()
+    expect(screen.getByText(/配車を登録する前の予約変更は.*橙色の注意書きは出ません/)).toBeInTheDocument()
+    expect(screen.getByText(/数量変更を「連絡事項」に書いても数量欄は変わりません/)).toBeInTheDocument()
+    expect(screen.getByText('要再確認')).toBeInTheDocument()
   })
 
   it('車両管理を直接表示する', () => {
