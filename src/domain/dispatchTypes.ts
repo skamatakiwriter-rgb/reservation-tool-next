@@ -19,13 +19,21 @@ export type VehicleLoadHold = {
 export type Vehicle = {
   vehicleId: string
   vehicleCode: string
-  displayName: string
+  registrationNumber?: string
+  /** 旧データ読込用。新規登録・画面表示ではregistrationNumberを使用する。 */
+  displayName?: string
   vehicleType: string
   capacityNote?: string
   usageNotes?: string
   isActive: boolean
+  updatedAt?: string
+  updatedBy?: Actor
   version: number
   loadHold?: VehicleLoadHold
+}
+
+export function vehicleName(vehicle: Vehicle | undefined): string {
+  return vehicle?.registrationNumber?.trim() || vehicle?.displayName?.trim() || '車両不明'
 }
 
 export type Driver = {

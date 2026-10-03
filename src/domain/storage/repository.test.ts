@@ -337,6 +337,46 @@ describe('ReservationRepository', () => {
     repository.close()
   })
 
+  it('車両コードを自動採番し、登録・編集・無効化と配車・保留の保護を行う', async () => {
+    const repository = makeRepository()
+    const initialized = await repository.ensureInitialized()
+    const generationId = initialized.metadata.generationId
+    const created = await repository.createVehicle({ generationId, idempotencyKey: 'vehicle-create', actor: 'demo-admin', input: { registrationNumber: 'デモ 500 え 00-04', vehicleType: '4t箱車', capacityNote: '参考積載', usageNotes: '架空の注意事項' } })
+    expect(created.kind).toBe('success')
+
+    const duplicate = await repository.createVehicle({ generationId, idempotencyKey: 'vehicle-duplicate', actor: 'demo-admin', input: { registrationNumber: 'デモ500え0004', vehicleType: '4t箱車' } })
+    expect(duplicate.kind).toBe('vehicleRegistrationConflict')
+
+    const afterCreate = await repository.snapshot()
+    const added = afterCreate.vehicles.find((vehicle) => vehicle.vehicleCode === 'VEH-0004')!
+    expect(added).toMatchObject({ registrationNumber: 'デモ 500 え 00-04', vehicleType: '4t箱車', isActive: true, version: 1 })
+    const updated = await repository.updateVehicle({ generationId, idempotencyKey: 'vehicle-update', actor: 'demo-admin', vehicleId: added.vehicleId, expectedVersion: added.version, input: { registrationNumber: 'デモ 500 え 00-05', vehicleType: '4t箱車', capacityNote: '更新後', usageNotes: '架空の注意事項' } })
+    expect(updated.kind).toBe('success')
+    const edited = (await repository.snapshot()).vehicles.find((vehicle) => vehicle.vehicleId === added.vehicleId)!
+    expect(edited).toMatchObject({ vehicleCode: 'VEH-0004', registrationNumber: 'デモ 500 え 00-05', capacityNote: '更新後', version: 2 })
+
+    const deactivated = await repository.setVehicleActive({ generationId, idempotencyKey: 'vehicle-disable', actor: 'demo-admin', vehicleId: edited.vehicleId, expectedVersion: edited.version, isActive: false })
+    expect(deactivated.kind).toBe('success')
+    const disabled = (await repository.snapshot()).vehicles.find((vehicle) => vehicle.vehicleId === edited.vehicleId)!
+    expect(disabled.isActive).toBe(false)
+    const reactivated = await repository.setVehicleActive({ generationId, idempotencyKey: 'vehicle-enable', actor: 'demo-admin', vehicleId: disabled.vehicleId, expectedVersion: disabled.version, isActive: true })
+    expect(reactivated.kind).toBe('success')
+
+    const assigned = (await repository.snapshot()).vehicles.find((vehicle) => vehicle.vehicleId === 'demo-vehicle-001')!
+    const assignedBlocked = await repository.setVehicleActive({ generationId, idempotencyKey: 'vehicle-disable-assigned', actor: 'demo-admin', vehicleId: assigned.vehicleId, expectedVersion: assigned.version, isActive: false })
+    expect(assignedBlocked.kind).toBe('vehicleHasActiveDispatches')
+    const held = (await repository.snapshot()).vehicles.find((vehicle) => vehicle.vehicleId === 'demo-vehicle-003')!
+    const holdBlocked = await repository.setVehicleActive({ generationId, idempotencyKey: 'vehicle-disable-held', actor: 'demo-admin', vehicleId: held.vehicleId, expectedVersion: held.version, isActive: false })
+    expect(holdBlocked.kind).toBe('vehicleHasLoadHold')
+    expect((await repository.snapshot()).auditLogs).toEqual(expect.arrayContaining([
+      expect.objectContaining({ entityType: 'vehicle', entityId: added.vehicleId, action: 'created' }),
+      expect.objectContaining({ entityType: 'vehicle', entityId: added.vehicleId, action: 'updated' }),
+      expect.objectContaining({ entityType: 'vehicle', entityId: added.vehicleId, action: 'deactivated' }),
+      expect.objectContaining({ entityType: 'vehicle', entityId: added.vehicleId, action: 'activated' }),
+    ]))
+    repository.close()
+  })
+
   it('ドライバーコードを自動採番し、登録・編集・無効化と未完了配車の保護を行う', async () => {
     const repository = makeRepository()
     const initialized = await repository.ensureInitialized()

@@ -3,6 +3,7 @@ import './App.css'
 import { ReservePage } from './reserve/ReservePage'
 import { AdminPage } from './admin/AdminPage'
 import { DriverManagementPage } from './admin/DriverManagementPage'
+import { VehicleManagementPage } from './admin/VehicleManagementPage'
 import { DriverPage } from './driver/DriverPage'
 import { GuidePage } from './guide/GuidePage'
 import { DemoDataPage } from './demo/DemoDataPage'
@@ -39,6 +40,7 @@ function AppShell() {
           <Route path="reserve" element={<ReservePage />} />
           <Route path="admin" element={<AdminPage />} />
           <Route path="admin/drivers" element={<DriverManagementPage />} />
+          <Route path="admin/vehicles" element={<VehicleManagementPage />} />
           <Route path="driver" element={<DriverPage />} />
           <Route path="guide" element={<GuidePage />} />
           <Route path="demo-data" element={<DemoDataPage />} />

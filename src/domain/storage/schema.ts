@@ -1,6 +1,6 @@
 export const DATABASE_VERSION = 2
 export const SCHEMA_VERSION = 2
-export const SEED_VERSION = '2026-09-27.1'
+export const SEED_VERSION = '2026-10-03.1'
 
 export const storeNames = {
   metadata: 'metadata',

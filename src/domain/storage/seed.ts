@@ -15,11 +15,11 @@ export type SeedData = {
   internalNotes: InternalNote[]
 }
 
-export function createVehicleSeed(): Vehicle[] {
+export function createVehicleSeed(now: string): Vehicle[] {
   return [
-    { vehicleId: 'demo-vehicle-001', vehicleCode: 'VEH-DEMO-001', displayName: '2t平ボディ1号', vehicleType: '2t平ボディ', isActive: true, version: 1 },
-    { vehicleId: 'demo-vehicle-002', vehicleCode: 'VEH-DEMO-002', displayName: '2t箱車1号', vehicleType: '2t箱車', isActive: true, version: 1 },
-    { vehicleId: 'demo-vehicle-003', vehicleCode: 'VEH-DEMO-003', displayName: 'パッカー車1号', vehicleType: 'パッカー車', isActive: true, version: 1 },
+    { vehicleId: 'demo-vehicle-001', vehicleCode: 'VEH-0001', registrationNumber: 'デモ 100 あ 00-01', vehicleType: '2t平ボディ', capacityNote: '積載量はデモ用の参考情報です', isActive: true, updatedAt: now, updatedBy: 'demo-system', version: 1 },
+    { vehicleId: 'demo-vehicle-002', vehicleCode: 'VEH-0002', registrationNumber: 'デモ 100 い 00-02', vehicleType: '2t箱車', capacityNote: '積載量はデモ用の参考情報です', isActive: true, updatedAt: now, updatedBy: 'demo-system', version: 1 },
+    { vehicleId: 'demo-vehicle-003', vehicleCode: 'VEH-0003', registrationNumber: 'デモ 800 う 00-03', vehicleType: 'パッカー車', capacityNote: '積載量はデモ用の参考情報です', isActive: true, updatedAt: now, updatedBy: 'demo-system', version: 1 },
   ]
 }
 
@@ -89,7 +89,7 @@ export function createSeedData(today: string, now: string, generationId: string)
     { ...makeDispatch(16, reviewBeforeChange, 'demo-vehicle-001', 'demo-driver-001', now, 'assigned'), needsReview: true },
     makeDispatch(17, byNumber(17), 'demo-vehicle-003', 'demo-driver-003', now, 'completed', 'allCollected'),
   ]
-  const vehicles = createVehicleSeed()
+  const vehicles = createVehicleSeed(now)
   vehicles[2].loadHold = {
     status: 'storedOnVehicle',
     reservationId: byNumber(17).reservationId,

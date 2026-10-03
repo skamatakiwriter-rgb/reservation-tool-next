@@ -1,6 +1,6 @@
 import { Link } from 'react-router'
 
-export function PageHelp({ title, steps, anchor }: { title: string; steps: string[]; anchor: 'reserve' | 'admin' | 'driver-master' | 'driver' }) {
+export function PageHelp({ title, steps, anchor }: { title: string; steps: string[]; anchor: 'reserve' | 'admin' | 'driver-master' | 'vehicle-master' | 'driver' }) {
   return (
     <details className="page-help">
       <summary>{title}</summary>

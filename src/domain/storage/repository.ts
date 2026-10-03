@@ -51,7 +51,7 @@ export type SaveResult =
   | { kind: 'versionConflict' | 'staleGeneration' | 'idempotencyConflict' | 'invalidTransition' | 'notFound' }
   | { kind: 'activeDispatchExists' | 'reservationNotDispatchable' | 'vehicleUnavailable' | 'vehicleOnHold' | 'driverUnavailable' | 'dispatchVersionConflict' | 'invalidDispatchTransition' | 'reviewRequired' | 'invalidOutcome' | 'vehicleHoldConflict' | 'vehicleVersionConflict' }
   | { kind: 'vehicleScheduleConflict' | 'driverScheduleConflict'; conflictingDispatchId: string }
-  | { kind: 'driverHasActiveDispatches' }
+  | { kind: 'driverHasActiveDispatches' | 'vehicleRegistrationConflict' | 'vehicleHasActiveDispatches' | 'vehicleHasLoadHold' }
   | { kind: 'storageFull' | 'storageUnavailable'; message: string }
 
 export type CreateReservationCommand = {
@@ -186,6 +186,38 @@ export type AddInternalNoteCommand = {
   body: string
 }
 
+export type VehicleInput = {
+  registrationNumber: string
+  vehicleType: string
+  capacityNote?: string
+  usageNotes?: string
+}
+
+export type CreateVehicleCommand = {
+  generationId: string
+  idempotencyKey: string
+  actor: Actor
+  input: VehicleInput
+}
+
+export type UpdateVehicleCommand = {
+  generationId: string
+  idempotencyKey: string
+  actor: Actor
+  vehicleId: string
+  expectedVersion: number
+  input: VehicleInput
+}
+
+export type SetVehicleActiveCommand = {
+  generationId: string
+  idempotencyKey: string
+  actor: Actor
+  vehicleId: string
+  expectedVersion: number
+  isActive: boolean
+}
+
 export type DriverInput = {
   fullName: string
   notes?: string
@@ -273,7 +305,7 @@ export class ReservationRepository {
         const vehicleStore = transaction.objectStore(storeNames.vehicles)
         const driverStore = transaction.objectStore(storeNames.drivers)
         if (await requestResult(vehicleStore.count()) === 0) {
-          createVehicleSeed().forEach((vehicle) => vehicleStore.add(vehicle))
+          createVehicleSeed(now).forEach((vehicle) => vehicleStore.add(vehicle))
         }
         if (await requestResult(driverStore.count()) === 0) {
           createDriverSeed().forEach((driver) => driverStore.add(driver))
@@ -1273,6 +1305,122 @@ export class ReservationRepository {
     return { kind: 'success', payload }
   }
 
+  async createVehicle(command: CreateVehicleCommand): Promise<SaveResult> {
+    return this.executeSave(() => this.createVehicleUnsafe(command))
+  }
+
+  private async createVehicleUnsafe(command: CreateVehicleCommand): Promise<SaveResult> {
+    const database = await this.getDatabase()
+    const input = normalizeVehicleInput(command.input)
+    const requestFingerprint = fingerprint({ operation: 'createVehicle', input })
+    const transaction = database.transaction(allStoreNames, 'readwrite')
+    const done = transactionDone(transaction)
+    const metadata = await this.getMetadata(transaction)
+    if (!isCurrentGeneration(metadata, command.generationId)) return abortSave(transaction, done, { kind: 'staleGeneration' })
+    const replay = await this.replayResult(transaction, metadata.generationId, command.idempotencyKey, requestFingerprint)
+    if (replay) return abortSave(transaction, done, replay)
+    const errors = validateVehicleInput(input)
+    if (errors.length > 0) return abortValidation(transaction, done, errors)
+    const store = transaction.objectStore(storeNames.vehicles)
+    const vehicles = await requestResult(store.getAll()) as Vehicle[]
+    if (hasVehicleRegistrationConflict(vehicles, input.registrationNumber)) return abortSave(transaction, done, { kind: 'vehicleRegistrationConflict' })
+
+    const now = this.now().toISOString()
+    const vehicleId = this.createId()
+    const vehicle: Vehicle = {
+      vehicleId,
+      vehicleCode: nextVehicleCode(vehicles),
+      ...input,
+      isActive: true,
+      updatedAt: now,
+      updatedBy: command.actor,
+      version: 1,
+    }
+    const payload: OperationResultPayload = { generationId: metadata.generationId, vehicleId, vehicleVersion: 1 }
+    store.add(vehicle)
+    transaction.objectStore(storeNames.auditLogs).add({ auditId: this.createId(), entityType: 'vehicle', entityId: vehicleId, action: 'created', after: vehicleAuditValue(vehicle), actor: command.actor, occurredAt: now } satisfies AuditLog)
+    transaction.objectStore(storeNames.idempotency).add(makeIdempotency(metadata.generationId, command.idempotencyKey, requestFingerprint, 'createVehicle', payload, now, vehicleId))
+    transaction.objectStore(storeNames.metadata).put({ ...metadata, lastUsedAt: now, updatedAt: now })
+    await done
+    return { kind: 'success', payload }
+  }
+
+  async updateVehicle(command: UpdateVehicleCommand): Promise<SaveResult> {
+    return this.executeSave(() => this.updateVehicleUnsafe(command))
+  }
+
+  private async updateVehicleUnsafe(command: UpdateVehicleCommand): Promise<SaveResult> {
+    const database = await this.getDatabase()
+    const input = normalizeVehicleInput(command.input)
+    const requestFingerprint = fingerprint({ operation: 'updateVehicle', vehicleId: command.vehicleId, expectedVersion: command.expectedVersion, input })
+    const transaction = database.transaction(allStoreNames, 'readwrite')
+    const done = transactionDone(transaction)
+    const metadata = await this.getMetadata(transaction)
+    if (!isCurrentGeneration(metadata, command.generationId)) return abortSave(transaction, done, { kind: 'staleGeneration' })
+    const replay = await this.replayResult(transaction, metadata.generationId, command.idempotencyKey, requestFingerprint)
+    if (replay) return abortSave(transaction, done, replay)
+    const store = transaction.objectStore(storeNames.vehicles)
+    const current = await requestResult(store.get(command.vehicleId)) as Vehicle | undefined
+    if (!current) return abortSave(transaction, done, { kind: 'notFound' })
+    if (current.version !== command.expectedVersion) return abortSave(transaction, done, { kind: 'vehicleVersionConflict' })
+    const errors = validateVehicleInput(input)
+    if (errors.length > 0) return abortValidation(transaction, done, errors)
+    const vehicles = await requestResult(store.getAll()) as Vehicle[]
+    if (hasVehicleRegistrationConflict(vehicles, input.registrationNumber, current.vehicleId)) return abortSave(transaction, done, { kind: 'vehicleRegistrationConflict' })
+
+    const now = this.now().toISOString()
+    const updated: Vehicle = { ...current, ...input, displayName: undefined, updatedAt: now, updatedBy: command.actor, version: current.version + 1 }
+    const payload: OperationResultPayload = { generationId: metadata.generationId, vehicleId: updated.vehicleId, vehicleVersion: updated.version }
+    store.put(updated)
+    transaction.objectStore(storeNames.auditLogs).add({ auditId: this.createId(), entityType: 'vehicle', entityId: updated.vehicleId, action: 'updated', before: vehicleAuditValue(current), after: vehicleAuditValue(updated), actor: command.actor, occurredAt: now } satisfies AuditLog)
+    transaction.objectStore(storeNames.idempotency).add(makeIdempotency(metadata.generationId, command.idempotencyKey, requestFingerprint, 'updateVehicle', payload, now, updated.vehicleId))
+    transaction.objectStore(storeNames.metadata).put({ ...metadata, lastUsedAt: now, updatedAt: now })
+    await done
+    return { kind: 'success', payload }
+  }
+
+  async setVehicleActive(command: SetVehicleActiveCommand): Promise<SaveResult> {
+    return this.executeSave(() => this.setVehicleActiveUnsafe(command))
+  }
+
+  private async setVehicleActiveUnsafe(command: SetVehicleActiveCommand): Promise<SaveResult> {
+    const database = await this.getDatabase()
+    const requestFingerprint = fingerprint({ operation: 'setVehicleActive', ...command })
+    const transaction = database.transaction(allStoreNames, 'readwrite')
+    const done = transactionDone(transaction)
+    const metadata = await this.getMetadata(transaction)
+    if (!isCurrentGeneration(metadata, command.generationId)) return abortSave(transaction, done, { kind: 'staleGeneration' })
+    const replay = await this.replayResult(transaction, metadata.generationId, command.idempotencyKey, requestFingerprint)
+    if (replay) return abortSave(transaction, done, replay)
+    const store = transaction.objectStore(storeNames.vehicles)
+    const current = await requestResult(store.get(command.vehicleId)) as Vehicle | undefined
+    if (!current) return abortSave(transaction, done, { kind: 'notFound' })
+    if (current.version !== command.expectedVersion) return abortSave(transaction, done, { kind: 'vehicleVersionConflict' })
+    if (current.isActive === command.isActive) {
+      const payload: OperationResultPayload = { generationId: metadata.generationId, vehicleId: current.vehicleId, vehicleVersion: current.version }
+      transaction.abort()
+      await ignoreAbort(done)
+      return { kind: 'success', payload }
+    }
+    if (!command.isActive) {
+      if (current.loadHold) return abortSave(transaction, done, { kind: 'vehicleHasLoadHold' })
+      const assignments = await requestResult(transaction.objectStore(storeNames.dispatchAssignments).getAll()) as DispatchAssignment[]
+      if (assignments.some((assignment) => assignment.vehicleId === current.vehicleId && isActiveDispatch(assignment))) {
+        return abortSave(transaction, done, { kind: 'vehicleHasActiveDispatches' })
+      }
+    }
+
+    const now = this.now().toISOString()
+    const updated: Vehicle = { ...current, isActive: command.isActive, updatedAt: now, updatedBy: command.actor, version: current.version + 1 }
+    const payload: OperationResultPayload = { generationId: metadata.generationId, vehicleId: updated.vehicleId, vehicleVersion: updated.version }
+    store.put(updated)
+    transaction.objectStore(storeNames.auditLogs).add({ auditId: this.createId(), entityType: 'vehicle', entityId: updated.vehicleId, action: command.isActive ? 'activated' : 'deactivated', before: vehicleAuditValue(current), after: vehicleAuditValue(updated), actor: command.actor, occurredAt: now } satisfies AuditLog)
+    transaction.objectStore(storeNames.idempotency).add(makeIdempotency(metadata.generationId, command.idempotencyKey, requestFingerprint, 'setVehicleActive', payload, now, updated.vehicleId))
+    transaction.objectStore(storeNames.metadata).put({ ...metadata, lastUsedAt: now, updatedAt: now })
+    await done
+    return { kind: 'success', payload }
+  }
+
   async createDriver(command: CreateDriverCommand): Promise<SaveResult> {
     return this.executeSave(() => this.createDriverUnsafe(command))
   }
@@ -1569,6 +1717,55 @@ function makeIdempotency(generationId: string, idempotencyKey: string, requestFi
 
 function reservationAuditValue(reservation: Reservation): Record<string, unknown> {
   return { requestedDate: reservation.requestedDate, categoryId: reservation.categoryId, companyName: reservation.companyName, contactName: reservation.contactName, phoneDisplay: reservation.phoneDisplay, address: reservation.address, contactNotes: reservation.contactNotes, categoryAnswers: reservation.categoryAnswers, status: reservation.status }
+}
+
+function normalizeVehicleInput(input: VehicleInput): VehicleInput {
+  return {
+    registrationNumber: input.registrationNumber.trim(),
+    vehicleType: input.vehicleType.trim(),
+    capacityNote: input.capacityNote?.trim() || undefined,
+    usageNotes: input.usageNotes?.trim() || undefined,
+  }
+}
+
+function validateVehicleInput(input: VehicleInput): ValidationError[] {
+  const errors: ValidationError[] = []
+  if (!vehicleRegistrationKey(input.registrationNumber)) errors.push({ field: 'registrationNumber', code: 'required', message: '車両ナンバーを入力してください。' })
+  else if (input.registrationNumber.length > 30) errors.push({ field: 'registrationNumber', code: 'maxLength', message: '車両ナンバーは30文字以内で入力してください。' })
+  if (!input.vehicleType) errors.push({ field: 'vehicleType', code: 'required', message: '車種を入力してください。' })
+  else if (input.vehicleType.length > 50) errors.push({ field: 'vehicleType', code: 'maxLength', message: '車種は50文字以内で入力してください。' })
+  if ((input.capacityNote?.length ?? 0) > 200) errors.push({ field: 'capacityNote', code: 'maxLength', message: '積載参考情報は200文字以内で入力してください。' })
+  if ((input.usageNotes?.length ?? 0) > 300) errors.push({ field: 'usageNotes', code: 'maxLength', message: '用途・注意事項は300文字以内で入力してください。' })
+  return errors
+}
+
+function vehicleRegistrationKey(value: string | undefined): string {
+  return value?.normalize('NFKC').replace(/[\s\-\u2010-\u2015\u2212]/g, '').toLocaleLowerCase('ja') ?? ''
+}
+
+function hasVehicleRegistrationConflict(vehicles: Vehicle[], registrationNumber: string, excludeVehicleId?: string): boolean {
+  const key = vehicleRegistrationKey(registrationNumber)
+  return vehicles.some((vehicle) => vehicle.vehicleId !== excludeVehicleId && vehicleRegistrationKey(vehicle.registrationNumber) === key)
+}
+
+function nextVehicleCode(vehicles: Vehicle[]): string {
+  const largestNumber = vehicles.reduce((largest, vehicle) => {
+    const suffix = vehicle.vehicleCode.match(/(\d+)$/)?.[1]
+    return suffix ? Math.max(largest, Number(suffix)) : largest
+  }, 0)
+  return `VEH-${String(largestNumber + 1).padStart(4, '0')}`
+}
+
+function vehicleAuditValue(vehicle: Vehicle): Record<string, unknown> {
+  return {
+    vehicleCode: vehicle.vehicleCode,
+    registrationNumber: vehicle.registrationNumber,
+    vehicleType: vehicle.vehicleType,
+    capacityNote: vehicle.capacityNote,
+    usageNotes: vehicle.usageNotes,
+    isActive: vehicle.isActive,
+    version: vehicle.version,
+  }
 }
 
 function normalizeDriverInput(input: DriverInput): DriverInput {

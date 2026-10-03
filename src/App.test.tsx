@@ -10,6 +10,7 @@ function renderAt(path: string) {
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ['Date'] })
   vi.setSystemTime(new Date('2026-09-18T03:00:00.000Z'))
+  sessionStorage.clear()
 })
 
 afterEach(() => vi.useRealTimers())
@@ -52,7 +53,14 @@ describe('主要URL', () => {
     expect(screen.getByRole('heading', { name: '利用者画面' })).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: '予約・配車管理' })).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: 'ドライバー管理' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: '車両管理' })).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: 'ドライバー画面' })).toBeInTheDocument()
+  })
+
+  it('車両管理を直接表示する', () => {
+    renderAt('/admin/vehicles')
+    expect(screen.getByRole('heading', { name: '車両管理' })).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: '予約・配車管理を開始する' })).toHaveAttribute('href', '/admin')
   })
 
   it('共通のデモデータ管理画面を直接表示する', async () => {

@@ -17,6 +17,8 @@ describe('Ver2完全初期データ', () => {
     )
     expect(seed.dispatchAssignments).toHaveLength(7)
     expect(seed.internalNotes).toHaveLength(3)
+    expect(seed.vehicles.map((item) => item.vehicleCode)).toEqual(['VEH-0001', 'VEH-0002', 'VEH-0003'])
+    expect(seed.vehicles.every((item) => Boolean(item.registrationNumber) && !item.displayName)).toBe(true)
     if (!isSunday(today)) expect(reservations.get('demo-reservation-012')?.requestedDate).toBe(today)
     for (const assignment of seed.dispatchAssignments) {
       const reservation = reservations.get(assignment.reservationId)
