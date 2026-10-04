@@ -1,0 +1,66 @@
+.driver-job.driver-review-pending {
+  border-color: #c94a4a;
+  box-shadow: inset 4px 0 0 #c43737;
+  background: #fff8f7;
+}
+
+.driver-review-list-badge,
+.driver-day-review-count,
+.admin-driver-review-status.pending {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  padding: 0.2rem 0.55rem;
+  border-radius: 999px;
+  color: #fff;
+  background: #b83232;
+  font-size: 0.76rem;
+  font-weight: 800;
+}
+
+.driver-day-review-count {
+  margin-left: auto;
+}
+
+.driver-review-confirm {
+  margin-top: 1rem;
+  padding: 1rem;
+  border: 2px solid #c43737;
+  border-radius: 12px;
+  background: #fff7f6;
+}
+
+.driver-review-confirm strong {
+  color: #982828;
+}
+
+.driver-review-confirm p {
+  margin: 0.4rem 0 0.85rem;
+  color: #6f3a3a;
+  line-height: 1.55;
+}
+
+.driver-review-confirm button {
+  border-color: #a92e2e;
+  color: #fff;
+  background: #a92e2e;
+}
+
+.driver-review-action-help {
+  color: #982828;
+  font-weight: 800;
+}
+
+.admin-driver-review-status {
+  display: inline-flex;
+  width: fit-content;
+  color: #45616c;
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+@media (max-width: 620px) {
+  .driver-day-review-count {
+    margin-left: 0.4rem;
+  }
+}

@@ -2,7 +2,7 @@ import { evaluateAvailability } from '../availability'
 import { categoryRequiresDispatch } from '../categories'
 import { todayInJapan } from '../dateRules'
 import { timeRangesOverlap } from '../dispatchRules'
-import { snapshotForDispatch, type CollectionOutcome, type DispatchAssignment, type DispatchReservationSnapshot, type Driver, type InternalNote, type Vehicle } from '../dispatchTypes'
+import { driverReviewRequired, driverReviewRevision, snapshotDispatchForDriver, snapshotForDispatch, type CollectionOutcome, type DispatchAssignment, type DispatchReservationSnapshot, type Driver, type InternalNote, type Vehicle } from '../dispatchTypes'
 import { validateCollectionOutcome, validateDispatchCancelReason, validateDispatchPlan, validateInternalNote, validateVehicleHoldReason, type DispatchPlanInput } from '../dispatchValidation'
 import { initialStatus, canTransition } from '../statusRules'
 import type {
@@ -177,6 +177,7 @@ export type ReleaseVehicleLoadHoldCommand = {
 }
 
 export type AcknowledgeDispatchReviewCommand = DispatchWorkCommand
+export type AcknowledgeDriverReviewCommand = DispatchWorkCommand
 
 export type AddInternalNoteCommand = {
   generationId: string
@@ -742,6 +743,10 @@ export class ReservationRepository {
           },
         ],
         needsReview: true,
+        driverReviewRevision: driverReviewRevision(assignment) + 1,
+        driverAcknowledgedAt: undefined,
+        driverAcknowledgedBy: undefined,
+        driverAcknowledgedDriverId: undefined,
         updatedAt: now,
         updatedBy: command.actor,
         version: assignment.version + 1,
@@ -873,6 +878,10 @@ export class ReservationRepository {
       updatedBy: command.actor,
       version: 1,
     }
+    assignment.driverReviewRevision = 0
+    assignment.driverAcknowledgedRevision = 0
+    assignment.driverReservationSnapshotAtLastAcknowledgement = structuredClone(snapshot)
+    assignment.driverDispatchSnapshotAtLastAcknowledgement = snapshotDispatchForDriver(assignment)
     const payload: OperationResultPayload = { generationId: metadata.generationId, reservationId: reservation.reservationId, dispatchId, dispatchVersion: 1, attemptNumber }
     assignmentStore.add(assignment)
     transaction.objectStore(storeNames.auditLogs).add({
@@ -910,6 +919,7 @@ export class ReservationRepository {
     if (!current || current.reservationId !== reservation.reservationId) return abortSave(transaction, done, { kind: 'notFound' })
     if (current.version !== command.expectedDispatchVersion) return abortSave(transaction, done, { kind: 'dispatchVersionConflict' })
     if (current.status !== 'assigned') return abortSave(transaction, done, { kind: 'invalidDispatchTransition' })
+    if (command.actor.startsWith('demo-driver:') && driverReviewRequired(current)) return abortSave(transaction, done, { kind: 'invalidDispatchTransition' })
     const previous = await requestResult(assignmentStore.index('byReservationId').getAll(command.reservationId)) as DispatchAssignment[]
     if (previous.some((item) => item.dispatchId !== current.dispatchId && isActiveDispatch(item))) {
       return abortSave(transaction, done, { kind: 'activeDispatchExists' })
@@ -932,6 +942,13 @@ export class ReservationRepository {
       updatedAt: now,
       updatedBy: command.actor,
       version: current.version + 1,
+    }
+    const driverVisibleChanged = fingerprint(snapshotDispatchForDriver(current)) !== fingerprint(snapshotDispatchForDriver(updated))
+    if (driverVisibleChanged) {
+      updated.driverReviewRevision = driverReviewRevision(current) + 1
+      updated.driverAcknowledgedAt = undefined
+      updated.driverAcknowledgedBy = undefined
+      updated.driverAcknowledgedDriverId = undefined
     }
     const payload: OperationResultPayload = { generationId: metadata.generationId, reservationId: reservation.reservationId, dispatchId: updated.dispatchId, dispatchVersion: updated.version, attemptNumber: updated.attemptNumber }
     assignmentStore.put(updated)
@@ -1013,6 +1030,7 @@ export class ReservationRepository {
     if (!current || current.reservationId !== reservation.reservationId) return abortSave(transaction, done, { kind: 'notFound' })
     if (current.version !== command.expectedDispatchVersion) return abortSave(transaction, done, { kind: 'dispatchVersionConflict' })
     if (current.status !== 'assigned') return abortSave(transaction, done, { kind: 'invalidDispatchTransition' })
+    if (command.actor.startsWith('demo-driver:') && driverReviewRequired(current)) return abortSave(transaction, done, { kind: 'invalidDispatchTransition' })
     const related = await requestResult(assignmentStore.index('byReservationId').getAll(reservation.reservationId)) as DispatchAssignment[]
     if (related.some((item) => item.dispatchId !== current.dispatchId && isActiveDispatch(item))) {
       return abortSave(transaction, done, { kind: 'activeDispatchExists' })
@@ -1057,6 +1075,7 @@ export class ReservationRepository {
     if (!current || current.reservationId !== reservation.reservationId) return abortSave(transaction, done, { kind: 'notFound' })
     if (current.version !== command.expectedDispatchVersion) return abortSave(transaction, done, { kind: 'dispatchVersionConflict' })
     if (current.status !== 'assigned' && current.status !== 'inProgress') return abortSave(transaction, done, { kind: 'invalidDispatchTransition' })
+    if (command.actor.startsWith('demo-driver:') && driverReviewRequired(current)) return abortSave(transaction, done, { kind: 'invalidDispatchTransition' })
     const related = await requestResult(assignmentStore.index('byReservationId').getAll(reservation.reservationId)) as DispatchAssignment[]
     if (related.some((item) => item.dispatchId !== current.dispatchId && isActiveDispatch(item))) {
       return abortSave(transaction, done, { kind: 'activeDispatchExists' })
@@ -1302,6 +1321,57 @@ export class ReservationRepository {
       after: { needsReview: false, reservationVersionAtLastReview: reservation.version }, actor: command.actor, occurredAt: now,
     } satisfies AuditLog)
     transaction.objectStore(storeNames.idempotency).add(makeIdempotency(metadata.generationId, command.idempotencyKey, requestFingerprint, 'acknowledgeDispatchReview', payload, now, updated.dispatchId))
+    transaction.objectStore(storeNames.metadata).put({ ...metadata, lastUsedAt: now, updatedAt: now })
+    await done
+    return { kind: 'success', payload }
+  }
+
+  async acknowledgeDriverReview(command: AcknowledgeDriverReviewCommand): Promise<SaveResult> {
+    return this.executeSave(() => this.acknowledgeDriverReviewUnsafe(command))
+  }
+
+  private async acknowledgeDriverReviewUnsafe(command: AcknowledgeDriverReviewCommand): Promise<SaveResult> {
+    const database = await this.getDatabase()
+    const requestFingerprint = fingerprint({ operation: 'acknowledgeDriverReview', ...command })
+    const transaction = database.transaction(allStoreNames, 'readwrite')
+    const done = transactionDone(transaction)
+    const metadata = await this.getMetadata(transaction)
+    if (!isCurrentGeneration(metadata, command.generationId)) return abortSave(transaction, done, { kind: 'staleGeneration' })
+    const replay = await this.replayResult(transaction, command.generationId, command.idempotencyKey, requestFingerprint)
+    if (replay) return abortSave(transaction, done, replay)
+    const reservation = await requestResult(transaction.objectStore(storeNames.reservations).get(command.reservationId)) as Reservation | undefined
+    if (!reservation) return abortSave(transaction, done, { kind: 'notFound' })
+    if (reservation.version !== command.expectedReservationVersion) return abortSave(transaction, done, { kind: 'versionConflict' })
+    const assignmentStore = transaction.objectStore(storeNames.dispatchAssignments)
+    const current = await requestResult(assignmentStore.get(command.dispatchId)) as DispatchAssignment | undefined
+    if (!current || current.reservationId !== reservation.reservationId) return abortSave(transaction, done, { kind: 'notFound' })
+    if (current.version !== command.expectedDispatchVersion) return abortSave(transaction, done, { kind: 'dispatchVersionConflict' })
+    if (!isActiveDispatch(current) || command.actor !== `demo-driver:${current.primaryDriverId}` || !driverReviewRequired(current)) {
+      return abortSave(transaction, done, { kind: 'invalidDispatchTransition' })
+    }
+
+    const now = this.now().toISOString()
+    const updated: DispatchAssignment = {
+      ...current,
+      driverAcknowledgedRevision: driverReviewRevision(current),
+      driverAcknowledgedAt: now,
+      driverAcknowledgedBy: command.actor,
+      driverAcknowledgedDriverId: current.primaryDriverId,
+      driverReservationSnapshotAtLastAcknowledgement: snapshotForDispatch(reservation),
+      driverDispatchSnapshotAtLastAcknowledgement: snapshotDispatchForDriver(current),
+      updatedAt: now,
+      updatedBy: command.actor,
+      version: current.version + 1,
+    }
+    const payload: OperationResultPayload = { generationId: metadata.generationId, reservationId: reservation.reservationId, version: reservation.version, dispatchId: updated.dispatchId, dispatchVersion: updated.version, attemptNumber: updated.attemptNumber }
+    assignmentStore.put(updated)
+    transaction.objectStore(storeNames.auditLogs).add({
+      auditId: this.createId(), entityType: 'dispatch', entityId: updated.dispatchId, action: 'driverReviewAcknowledged',
+      before: { driverAcknowledgedRevision: current.driverAcknowledgedRevision ?? 0 },
+      after: { driverAcknowledgedRevision: updated.driverAcknowledgedRevision, driverId: updated.driverAcknowledgedDriverId },
+      actor: command.actor, occurredAt: now,
+    } satisfies AuditLog)
+    transaction.objectStore(storeNames.idempotency).add(makeIdempotency(metadata.generationId, command.idempotencyKey, requestFingerprint, 'acknowledgeDriverReview', payload, now, updated.dispatchId))
     transaction.objectStore(storeNames.metadata).put({ ...metadata, lastUsedAt: now, updatedAt: now })
     await done
     return { kind: 'success', payload }
@@ -1590,25 +1660,33 @@ export class ReservationRepository {
       requestResult(transaction.objectStore(storeNames.auditLogs).getAll()) as Promise<AuditLog[]>,
     ])
     for (const assignment of assignments) {
-      if (assignment.reservationChangeHistory !== undefined) continue
-      const history = auditLogs
-        .filter((audit) => audit.entityType === 'reservation'
-          && audit.entityId === assignment.reservationId
-          && audit.action === 'updated'
-          && audit.occurredAt >= assignment.createdAt)
-        .flatMap((audit, index) => {
-          const before = dispatchSnapshotFromAudit(audit.before)
-          const after = dispatchSnapshotFromAudit(audit.after)
-          if (!before || !after || fingerprint(before) === fingerprint(after)) return []
-          return [{
-            changeId: `${assignment.dispatchId}-legacy-${audit.auditId}`,
-            reservationVersion: assignment.reservationVersionAtAssignment + index + 1,
-            changedAt: audit.occurredAt,
-            before,
-            after,
-          }]
-        })
-      assignmentStore.put({ ...assignment, reservationChangeHistory: history })
+      if (assignment.reservationChangeHistory !== undefined && assignment.driverReviewRevision !== undefined) continue
+      const history = assignment.reservationChangeHistory ?? auditLogs
+          .filter((audit) => audit.entityType === 'reservation'
+            && audit.entityId === assignment.reservationId
+            && audit.action === 'updated'
+            && audit.occurredAt >= assignment.createdAt)
+          .flatMap((audit, index) => {
+            const before = dispatchSnapshotFromAudit(audit.before)
+            const after = dispatchSnapshotFromAudit(audit.after)
+            if (!before || !after || fingerprint(before) === fingerprint(after)) return []
+            return [{
+              changeId: `${assignment.dispatchId}-legacy-${audit.auditId}`,
+              reservationVersion: assignment.reservationVersionAtAssignment + index + 1,
+              changedAt: audit.occurredAt,
+              before,
+              after,
+            }]
+          })
+      const reviewRevision = assignment.driverReviewRevision ?? (history.length > 0 ? history.length : assignment.needsReview ? 1 : 0)
+      assignmentStore.put({
+        ...assignment,
+        reservationChangeHistory: history,
+        driverReviewRevision: reviewRevision,
+        driverAcknowledgedRevision: assignment.driverAcknowledgedRevision ?? 0,
+        driverReservationSnapshotAtLastAcknowledgement: assignment.driverReservationSnapshotAtLastAcknowledgement ?? structuredClone(assignment.reservationSnapshotAtAssignment),
+        driverDispatchSnapshotAtLastAcknowledgement: assignment.driverDispatchSnapshotAtLastAcknowledgement ?? snapshotDispatchForDriver(assignment),
+      })
     }
   }
 

@@ -1,5 +1,5 @@
 import { addCalendarDays, isSunday } from '../dateRules'
-import { snapshotForDispatch, type CollectionOutcome, type DispatchAssignment, type Driver, type InternalNote, type Vehicle } from '../dispatchTypes'
+import { snapshotDispatchForDriver, snapshotForDispatch, type CollectionOutcome, type DispatchAssignment, type Driver, type InternalNote, type Vehicle } from '../dispatchTypes'
 import type { AuditLog, CategoryId, CategorySetting, Closure, DemoMetadata, Reservation } from '../types'
 import { SCHEMA_VERSION, SEED_VERSION } from './schema'
 
@@ -96,6 +96,8 @@ export function createSeedData(today: string, now: string, generationId: string)
         after: snapshotForDispatch(reviewReservation),
       }],
       needsReview: true,
+      driverReviewRevision: 1,
+      driverAcknowledgedRevision: 0,
     },
     makeDispatch(17, byNumber(17), 'demo-vehicle-003', 'demo-driver-003', now, 'completed', 'allCollected'),
   ]
@@ -214,7 +216,6 @@ function makeReservation(
     updatedAt: createdAt,
     version: 1,
   }
-
   if (status === 'confirmed' || status === 'completed') {
     reservation.confirmedAt = minutesBefore(now, 2)
     reservation.confirmedBy = 'demo-system'
@@ -268,6 +269,10 @@ function makeDispatch(
     updatedBy: 'demo-admin',
     version: 1,
   }
+  assignment.driverReviewRevision = 0
+  assignment.driverAcknowledgedRevision = 0
+  assignment.driverReservationSnapshotAtLastAcknowledgement = structuredClone(snapshot)
+  assignment.driverDispatchSnapshotAtLastAcknowledgement = snapshotDispatchForDriver(assignment)
   if (status === 'inProgress') {
     assignment.startedAt = minutesBefore(now, 1)
     assignment.startedBy = `demo-driver:${primaryDriverId}`

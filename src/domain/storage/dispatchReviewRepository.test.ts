@@ -1,7 +1,7 @@
 import 'fake-indexeddb/auto'
 
 import { afterEach, describe, expect, it } from 'vitest'
-import { snapshotForDispatch } from '../dispatchTypes'
+import { driverReviewRequired, snapshotForDispatch } from '../dispatchTypes'
 import { deleteReservationDatabase } from './idb'
 import { ReservationRepository } from './repository'
 
@@ -43,6 +43,54 @@ async function removeStoredChangeHistory(databaseName: string, dispatchId: strin
 }
 
 describe('配車の変更確認済み保存', () => {
+  it('管理者の確認後もドライバーを未確認のままにし、担当ドライバーの確認で解除する', async () => {
+    const { repository, generationId } = await setup()
+    let snapshot = await repository.snapshot()
+    const reservation = snapshot.reservations.find((item) => item.reservationId === 'demo-reservation-016')!
+    let assignment = snapshot.dispatchAssignments.find((item) => item.reservationId === reservation.reservationId)!
+    expect(driverReviewRequired(assignment)).toBe(true)
+
+    expect((await repository.acknowledgeDispatchReview({ generationId, idempotencyKey: 'admin-ack-16', actor: 'demo-admin', reservationId: reservation.reservationId, expectedReservationVersion: reservation.version, dispatchId: assignment.dispatchId, expectedDispatchVersion: assignment.version })).kind).toBe('success')
+    snapshot = await repository.snapshot()
+    assignment = snapshot.dispatchAssignments.find((item) => item.dispatchId === assignment.dispatchId)!
+    expect(assignment.needsReview).toBe(false)
+    expect(driverReviewRequired(assignment)).toBe(true)
+    expect((await repository.acknowledgeDriverReview({ generationId, idempotencyKey: 'wrong-driver-ack-16', actor: 'demo-driver:demo-driver-002', reservationId: reservation.reservationId, expectedReservationVersion: reservation.version, dispatchId: assignment.dispatchId, expectedDispatchVersion: assignment.version })).kind).toBe('invalidDispatchTransition')
+
+    const acknowledged = await repository.acknowledgeDriverReview({ generationId, idempotencyKey: 'driver-ack-16', actor: 'demo-driver:demo-driver-001', reservationId: reservation.reservationId, expectedReservationVersion: reservation.version, dispatchId: assignment.dispatchId, expectedDispatchVersion: assignment.version })
+    expect(acknowledged.kind).toBe('success')
+    snapshot = await repository.snapshot()
+    assignment = snapshot.dispatchAssignments.find((item) => item.dispatchId === assignment.dispatchId)!
+    expect(driverReviewRequired(assignment)).toBe(false)
+    expect(assignment).toMatchObject({ driverAcknowledgedDriverId: 'demo-driver-001', driverAcknowledgedBy: 'demo-driver:demo-driver-001' })
+    expect(snapshot.auditLogs.some((item) => item.entityId === assignment.dispatchId && item.action === 'driverReviewAcknowledged')).toBe(true)
+    repository.close()
+  })
+
+  it('ドライバー確認後の再変更と配車変更で再び要確認にする', async () => {
+    const { repository, generationId } = await setup()
+    let snapshot = await repository.snapshot()
+    let reservation = snapshot.reservations.find((item) => item.reservationId === 'demo-reservation-016')!
+    let assignment = snapshot.dispatchAssignments.find((item) => item.reservationId === reservation.reservationId)!
+    expect((await repository.acknowledgeDriverReview({ generationId, idempotencyKey: 'driver-first-ack-16', actor: 'demo-driver:demo-driver-001', reservationId: reservation.reservationId, expectedReservationVersion: reservation.version, dispatchId: assignment.dispatchId, expectedDispatchVersion: assignment.version })).kind).toBe('success')
+    snapshot = await repository.snapshot()
+    assignment = snapshot.dispatchAssignments.find((item) => item.dispatchId === assignment.dispatchId)!
+
+    expect((await repository.updateDispatch({ generationId, idempotencyKey: 'driver-instruction-change-16', actor: 'demo-admin', reservationId: reservation.reservationId, expectedReservationVersion: reservation.version, dispatchId: assignment.dispatchId, expectedDispatchVersion: assignment.version, plannedDate: assignment.plannedDate, plannedStartTime: assignment.plannedStartTime, plannedEndTime: assignment.plannedEndTime, vehicleId: assignment.vehicleId, primaryDriverId: assignment.primaryDriverId, driverInstructions: '裏口へ到着後に電話' })).kind).toBe('success')
+    snapshot = await repository.snapshot()
+    assignment = snapshot.dispatchAssignments.find((item) => item.dispatchId === assignment.dispatchId)!
+    expect(driverReviewRequired(assignment)).toBe(true)
+
+    expect((await repository.acknowledgeDriverReview({ generationId, idempotencyKey: 'driver-second-ack-16', actor: 'demo-driver:demo-driver-001', reservationId: reservation.reservationId, expectedReservationVersion: reservation.version, dispatchId: assignment.dispatchId, expectedDispatchVersion: assignment.version })).kind).toBe('success')
+    snapshot = await repository.snapshot()
+    assignment = snapshot.dispatchAssignments.find((item) => item.dispatchId === assignment.dispatchId)!
+    reservation = snapshot.reservations.find((item) => item.reservationId === reservation.reservationId)!
+    expect((await repository.updateReservation({ generationId, idempotencyKey: 'reservation-change-after-driver-ack-16', actor: 'demo-admin', reservationId: reservation.reservationId, expectedVersion: reservation.version, input: { categoryId: reservation.categoryId, requestedDate: reservation.requestedDate, companyName: reservation.companyName, contactName: reservation.contactName, phone: reservation.phoneDisplay, address: reservation.address, contactNotes: '到着前に連絡', categoryAnswers: reservation.categoryAnswers } })).kind).toBe('success')
+    assignment = (await repository.snapshot()).dispatchAssignments.find((item) => item.dispatchId === assignment.dispatchId)!
+    expect(driverReviewRequired(assignment)).toBe(true)
+    repository.close()
+  })
+
   it('最新の予約版とスナップショットを確認基準にし、割当時記録は変更しない', async () => {
     const { repository, generationId } = await setup()
     const before = await repository.snapshot()
@@ -154,6 +202,7 @@ describe('配車の変更確認済み保存', () => {
     const migrated = (await reopened.snapshot()).dispatchAssignments.find((item) => item.dispatchId === assignment.dispatchId)!
     expect(migrated.needsReview).toBe(false)
     expect(migrated.reservationChangeHistory).toHaveLength(1)
+    expect(driverReviewRequired(migrated)).toBe(true)
     expect(migrated.reservationChangeHistory?.[0]).toMatchObject({ before: { contactNotes: originalContactNotes }, after: { contactNotes: '門前で電話してください' } })
     reopened.close()
   })

@@ -109,8 +109,9 @@ describe('回収開始・作業結果の保存', () => {
     repository.close()
   })
 
-  it('要再確認の配車でも回収開始でき、変更確認の表示状態を保持する', async () => {
+  it('ドライバー未確認では本人の回収開始を拒否し、管理者の代理記録は許可する', async () => {
     const { repository, work } = await setup()
+    expect((await repository.startDispatch({ ...work(16, 'driver-review-start'), actor: 'demo-driver:demo-driver-001' })).kind).toBe('invalidDispatchTransition')
     const result = await repository.startDispatch(work(16, 'review-start'))
     expect(result.kind).toBe('success')
     const assignment = (await repository.snapshot()).dispatchAssignments.find((item) => item.dispatchId === 'demo-dispatch-016')!
@@ -118,8 +119,9 @@ describe('回収開始・作業結果の保存', () => {
     repository.close()
   })
 
-  it('要再確認の配車でも開始記録なしで作業結果を登録できる', async () => {
+  it('ドライバー未確認では本人の作業結果を拒否し、管理者の代理登録は許可する', async () => {
     const { repository, complete } = await setup()
+    expect((await repository.completeDispatch({ ...complete(16, 'driver-review-complete', 'allCollected'), actor: 'demo-driver:demo-driver-001' })).kind).toBe('invalidDispatchTransition')
     const result = await repository.completeDispatch(complete(16, 'review-complete', 'allCollected'))
     expect(result.kind).toBe('success')
     const snapshot = await repository.snapshot()

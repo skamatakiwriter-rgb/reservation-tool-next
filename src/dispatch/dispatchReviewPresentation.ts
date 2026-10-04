@@ -1,7 +1,7 @@
 import { snapshotForDispatch, type CategoryId, type DispatchAssignment, type DispatchReservationSnapshot, type Reservation } from '../domain'
 import { formatDate } from '../reserve/format'
 
-export type DispatchReviewFieldKey = 'requestedDate' | 'address' | 'categoryAnswers' | 'contactNotes'
+export type DispatchReviewFieldKey = 'requestedDate' | 'address' | 'categoryAnswers' | 'contactNotes' | 'plannedSchedule' | 'vehicle' | 'driverInstructions'
 
 export type DispatchReviewField = {
   key: DispatchReviewFieldKey
@@ -25,6 +25,11 @@ export function dispatchReviewChanges(reservation: Reservation, assignment: Disp
 
 export function dispatchReviewFields(reservation: Reservation, assignment: DispatchAssignment): DispatchReviewField[] {
   return dispatchSnapshotFields(assignment.reservationSnapshotAtLastReview, snapshotForDispatch(reservation))
+}
+
+export function driverReservationReviewFields(reservation: Reservation, assignment: DispatchAssignment): DispatchReviewField[] {
+  const before = assignment.driverReservationSnapshotAtLastAcknowledgement ?? assignment.reservationSnapshotAtAssignment
+  return dispatchSnapshotFields(before, snapshotForDispatch(reservation))
 }
 
 export function dispatchChangeHistory(reservation: Reservation, assignment: DispatchAssignment): DispatchChangeHistoryItem[] {

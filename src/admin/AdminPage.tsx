@@ -8,6 +8,8 @@ import {
   dispatchDisplayState,
   dispatchDeadlineTiming,
   driverName,
+  driverReviewRequired,
+  driverReviewRevision,
   vehicleName,
   normalizePhoneNumber,
   todayInJapan,
@@ -29,6 +31,7 @@ import { publishDemoChange } from '../reserve/demoSync'
 import { CollectionOutcomeDialog, type CollectionOutcomeInput } from '../dispatch/CollectionOutcomeDialog'
 import { dispatchReviewChanges } from '../dispatch/dispatchReviewPresentation'
 import { PageHelp } from '../guide/PageHelp'
+import '../dispatch/DriverReview.css'
 
 type View = 'calendar' | 'list'
 type CalendarCategoryId = '' | CategoryId
@@ -347,7 +350,8 @@ function DispatchRecord({ assignment, snapshot }: { assignment: DispatchAssignme
   const driver = snapshot.drivers.find((item) => item.driverId === assignment.primaryDriverId)
   const state = assignment.status === 'assigned' ? 'assigned' : assignment.status === 'inProgress' ? 'inProgress' : assignment.outcome === 'allCollected' ? 'allCollected' : assignment.outcome === 'partiallyCollected' ? 'needsRedispatch' : assignment.outcome === 'notCollected' ? 'needsAttention' : 'dataError'
   const label = assignment.status === 'cancelled' ? '配車取消' : dispatchStateLabels[state]
-  return <article className="dispatch-record"><strong>第{assignment.attemptNumber}便・{label}</strong><span>{formatDate(assignment.plannedDate)} {assignment.plannedStartTime}–{assignment.plannedEndTime}</span><span>{vehicleName(vehicle)}・{driverName(driver)}</span>{assignment.startedAt && <span>開始：{formatDateTime(assignment.startedAt)}</span>}{assignment.completedAt && <span>終了：{formatDateTime(assignment.completedAt)}</span>}{assignment.driverInstructions && <p><b>ドライバー向け指示</b>{assignment.driverInstructions}</p>}{assignment.actualCollectionSummary && <p><b>実際の回収内容</b>{assignment.actualCollectionSummary}</p>}{assignment.outcomeNotes && <p><b>結果メモ</b>{assignment.outcomeNotes}</p>}{assignment.cancelReason && <p><b>取消理由</b>{assignment.cancelReason}</p>}</article>
+  const reviewRevision = driverReviewRevision(assignment)
+  return <article className="dispatch-record"><strong>第{assignment.attemptNumber}便・{label}</strong><span>{formatDate(assignment.plannedDate)} {assignment.plannedStartTime}–{assignment.plannedEndTime}</span><span>{vehicleName(vehicle)}・{driverName(driver)}</span>{driverReviewRequired(assignment) && <span className="admin-driver-review-status pending">ドライバー未確認</span>}{reviewRevision > 0 && !driverReviewRequired(assignment) && <span className="admin-driver-review-status">ドライバー確認済み{assignment.driverAcknowledgedAt ? `：${formatDateTime(assignment.driverAcknowledgedAt)}` : ''}</span>}{assignment.startedAt && <span>開始：{formatDateTime(assignment.startedAt)}</span>}{assignment.completedAt && <span>終了：{formatDateTime(assignment.completedAt)}</span>}{assignment.driverInstructions && <p><b>ドライバー向け指示</b>{assignment.driverInstructions}</p>}{assignment.actualCollectionSummary && <p><b>実際の回収内容</b>{assignment.actualCollectionSummary}</p>}{assignment.outcomeNotes && <p><b>結果メモ</b>{assignment.outcomeNotes}</p>}{assignment.cancelReason && <p><b>取消理由</b>{assignment.cancelReason}</p>}</article>
 }
 
 function DispatchEditor({ reservation, assignment, snapshot, onCancel, onSaved, onError }: { reservation: Reservation; assignment?: DispatchAssignment; snapshot: DemoSnapshot; onCancel: () => void; onSaved: (message: string) => Promise<void>; onError: (message?: string) => void }) {
@@ -456,7 +460,7 @@ function answerLabel(id: CategoryId) { return id === 'keikoukan' ? 'おおよそ
 function answerValue(reservation: Reservation) { return reservation.categoryId === 'keikoukan' ? `${String(reservation.categoryAnswers.approximateTubeCount)}本` : String(reservation.categoryAnswers[reservation.categoryId === 'kagu' ? 'itemsAndQuantities' : 'typesAndQuantities']) }
 function formatDateTime(value: string) { return new Intl.DateTimeFormat('ja-JP', { timeZone: 'Asia/Tokyo', dateStyle: 'short', timeStyle: 'short' }).format(new Date(value)) }
 function auditLabel(action: string, after?: Record<string, unknown>) {
-  const label = ({ created: '予約作成', confirmed: '確定', completed: '完了', cancelled: '取消', updated: '内容変更', relatedDateAdded: '関連日追加', reaccepted: '取消予約から再受付', reacceptedAs: '新しい予約として再受付', dispatchCreated: '配車登録', dispatchUpdated: '配車変更', dispatchStarted: '回収開始', dispatchCompleted: '作業結果登録', dispatchCancelled: '配車取消', dispatchReviewRequired: '予約変更の再確認が必要', dispatchReviewAcknowledged: '予約変更を確認済み', added: '社内補足を追加', internalNoteAdded: '社内補足を追加', loadHoldStarted: '搬入判断待ちを開始', loadHoldConfirmed: '積み置き中へ変更', loadHoldReleased: '車両保留を解除' } as Record<string,string>)[action] ?? action
+  const label = ({ created: '予約作成', confirmed: '確定', completed: '完了', cancelled: '取消', updated: '内容変更', relatedDateAdded: '関連日追加', reaccepted: '取消予約から再受付', reacceptedAs: '新しい予約として再受付', dispatchCreated: '配車登録', dispatchUpdated: '配車変更', dispatchStarted: '回収開始', dispatchCompleted: '作業結果登録', dispatchCancelled: '配車取消', dispatchReviewRequired: '予約変更の再確認が必要', dispatchReviewAcknowledged: '予約変更を確認済み', driverReviewAcknowledged: 'ドライバーが変更内容を確認済み', added: '社内補足を追加', internalNoteAdded: '社内補足を追加', loadHoldStarted: '搬入判断待ちを開始', loadHoldConfirmed: '積み置き中へ変更', loadHoldReleased: '車両保留を解除' } as Record<string,string>)[action] ?? action
   const resultStatus = after?.status
   if ((action === 'reaccepted' || action === 'reacceptedAs') && typeof resultStatus === 'string' && resultStatus in statusLabels) {
     return `${label}（${statusLabels[resultStatus as ReservationStatus]}）`

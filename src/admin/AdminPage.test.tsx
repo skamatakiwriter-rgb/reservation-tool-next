@@ -206,7 +206,9 @@ describe('管理者画面', () => {
     expect(within(dialog).getByRole('button', { name: '作業結果を登録' })).toBeEnabled()
     fireEvent.click(within(dialog).getByRole('button', { name: '変更内容を確認済みにする' }))
     await waitFor(() => expect(screen.getByText('予約内容の変更を確認済みにしました。')).toBeInTheDocument())
-    expect(within(screen.getByRole('dialog', { name: 'DEMO-016' })).queryByText('予約内容が配車後に変更されています')).not.toBeInTheDocument()
+    const updatedDialog = screen.getByRole('dialog', { name: 'DEMO-016' })
+    expect(within(updatedDialog).queryByText('予約内容が配車後に変更されています')).not.toBeInTheDocument()
+    expect(within(updatedDialog).getByText('ドライバー未確認')).toBeInTheDocument()
   })
 
   it('社内補足を追記し、予約詳細だけに表示する', async () => {

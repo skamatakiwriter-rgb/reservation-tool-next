@@ -66,6 +66,15 @@ export type DispatchReservationChange = {
   after: DispatchReservationSnapshot
 }
 
+export type DriverDispatchSnapshot = {
+  plannedDate: string
+  plannedStartTime: string
+  plannedEndTime: string
+  vehicleId: string
+  primaryDriverId: string
+  driverInstructions?: string
+}
+
 export type DispatchAssignment = {
   dispatchId: string
   reservationId: string
@@ -83,6 +92,14 @@ export type DispatchAssignment = {
   /** 配車後の重要変更。旧DBレコードとの互換性のため任意項目として扱う。 */
   reservationChangeHistory?: DispatchReservationChange[]
   needsReview: boolean
+  /** ドライバーへ提示する内容の改訂番号。旧DBレコードでは未定義を許容する。 */
+  driverReviewRevision?: number
+  driverAcknowledgedRevision?: number
+  driverAcknowledgedAt?: string
+  driverAcknowledgedBy?: Actor
+  driverAcknowledgedDriverId?: string
+  driverReservationSnapshotAtLastAcknowledgement?: DispatchReservationSnapshot
+  driverDispatchSnapshotAtLastAcknowledgement?: DriverDispatchSnapshot
   driverInstructions?: string
   startedAt?: string
   startedBy?: Actor
@@ -117,4 +134,23 @@ export function snapshotForDispatch(reservation: Reservation): DispatchReservati
     categoryAnswers: structuredClone(reservation.categoryAnswers),
     contactNotes: reservation.contactNotes,
   }
+}
+
+export function snapshotDispatchForDriver(assignment: DispatchAssignment): DriverDispatchSnapshot {
+  return {
+    plannedDate: assignment.plannedDate,
+    plannedStartTime: assignment.plannedStartTime,
+    plannedEndTime: assignment.plannedEndTime,
+    vehicleId: assignment.vehicleId,
+    primaryDriverId: assignment.primaryDriverId,
+    driverInstructions: assignment.driverInstructions,
+  }
+}
+
+export function driverReviewRevision(assignment: DispatchAssignment): number {
+  return assignment.driverReviewRevision ?? (assignment.reservationChangeHistory?.length ?? (assignment.needsReview ? 1 : 0))
+}
+
+export function driverReviewRequired(assignment: DispatchAssignment): boolean {
+  return driverReviewRevision(assignment) > (assignment.driverAcknowledgedRevision ?? 0)
 }
