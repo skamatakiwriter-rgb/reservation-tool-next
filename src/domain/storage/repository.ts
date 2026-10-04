@@ -178,6 +178,7 @@ export type ReleaseVehicleLoadHoldCommand = {
 
 export type AcknowledgeDispatchReviewCommand = DispatchWorkCommand
 export type AcknowledgeDriverReviewCommand = DispatchWorkCommand
+export type AcknowledgeDriverReassignmentCommand = DispatchWorkCommand & { changeId: string }
 
 export type AddInternalNoteCommand = {
   generationId: string
@@ -944,11 +945,18 @@ export class ReservationRepository {
       version: current.version + 1,
     }
     const driverVisibleChanged = fingerprint(snapshotDispatchForDriver(current)) !== fingerprint(snapshotDispatchForDriver(updated))
+    const driverChanged = current.primaryDriverId !== updated.primaryDriverId
     if (driverVisibleChanged) {
       updated.driverReviewRevision = driverReviewRevision(current) + 1
       updated.driverAcknowledgedAt = undefined
       updated.driverAcknowledgedBy = undefined
       updated.driverAcknowledgedDriverId = undefined
+    }
+    if (driverChanged) {
+      updated.driverReassignmentHistory = [
+        ...(current.driverReassignmentHistory ?? []),
+        { changeId: this.createId(), changedAt: now, changedBy: command.actor, before: snapshotDispatchForDriver(current), after: snapshotDispatchForDriver(updated) },
+      ]
     }
     const payload: OperationResultPayload = { generationId: metadata.generationId, reservationId: reservation.reservationId, dispatchId: updated.dispatchId, dispatchVersion: updated.version, attemptNumber: updated.attemptNumber }
     assignmentStore.put(updated)
@@ -1328,6 +1336,52 @@ export class ReservationRepository {
 
   async acknowledgeDriverReview(command: AcknowledgeDriverReviewCommand): Promise<SaveResult> {
     return this.executeSave(() => this.acknowledgeDriverReviewUnsafe(command))
+  }
+
+  async acknowledgeDriverReassignment(command: AcknowledgeDriverReassignmentCommand): Promise<SaveResult> {
+    return this.executeSave(() => this.acknowledgeDriverReassignmentUnsafe(command))
+  }
+
+  private async acknowledgeDriverReassignmentUnsafe(command: AcknowledgeDriverReassignmentCommand): Promise<SaveResult> {
+    const database = await this.getDatabase()
+    const requestFingerprint = fingerprint({ operation: 'acknowledgeDriverReassignment', ...command })
+    const transaction = database.transaction(allStoreNames, 'readwrite')
+    const done = transactionDone(transaction)
+    const metadata = await this.getMetadata(transaction)
+    if (!isCurrentGeneration(metadata, command.generationId)) return abortSave(transaction, done, { kind: 'staleGeneration' })
+    const replay = await this.replayResult(transaction, command.generationId, command.idempotencyKey, requestFingerprint)
+    if (replay) return abortSave(transaction, done, replay)
+    const reservation = await requestResult(transaction.objectStore(storeNames.reservations).get(command.reservationId)) as Reservation | undefined
+    if (!reservation) return abortSave(transaction, done, { kind: 'notFound' })
+    if (reservation.version !== command.expectedReservationVersion) return abortSave(transaction, done, { kind: 'versionConflict' })
+    const assignmentStore = transaction.objectStore(storeNames.dispatchAssignments)
+    const current = await requestResult(assignmentStore.get(command.dispatchId)) as DispatchAssignment | undefined
+    if (!current || current.reservationId !== reservation.reservationId) return abortSave(transaction, done, { kind: 'notFound' })
+    if (current.version !== command.expectedDispatchVersion) return abortSave(transaction, done, { kind: 'dispatchVersionConflict' })
+    const event = current.driverReassignmentHistory?.find((item) => item.changeId === command.changeId)
+    if (!event || event.acknowledgedAt || command.actor !== `demo-driver:${event.before.primaryDriverId}`) {
+      return abortSave(transaction, done, { kind: 'invalidDispatchTransition' })
+    }
+
+    const now = this.now().toISOString()
+    const updated: DispatchAssignment = {
+      ...current,
+      driverReassignmentHistory: current.driverReassignmentHistory?.map((item) => item.changeId === command.changeId ? { ...item, acknowledgedAt: now, acknowledgedBy: command.actor } : item),
+      updatedAt: now,
+      updatedBy: command.actor,
+      version: current.version + 1,
+    }
+    const payload: OperationResultPayload = { generationId: metadata.generationId, reservationId: reservation.reservationId, version: reservation.version, dispatchId: updated.dispatchId, dispatchVersion: updated.version, attemptNumber: updated.attemptNumber }
+    assignmentStore.put(updated)
+    transaction.objectStore(storeNames.auditLogs).add({
+      auditId: this.createId(), entityType: 'dispatch', entityId: updated.dispatchId, action: 'driverReassignmentAcknowledged',
+      before: { changeId: command.changeId, acknowledgedAt: undefined }, after: { changeId: command.changeId, acknowledgedAt: now, driverId: event.before.primaryDriverId },
+      actor: command.actor, occurredAt: now,
+    } satisfies AuditLog)
+    transaction.objectStore(storeNames.idempotency).add(makeIdempotency(metadata.generationId, command.idempotencyKey, requestFingerprint, 'acknowledgeDriverReassignment', payload, now, updated.dispatchId))
+    transaction.objectStore(storeNames.metadata).put({ ...metadata, lastUsedAt: now, updatedAt: now })
+    await done
+    return { kind: 'success', payload }
   }
 
   private async acknowledgeDriverReviewUnsafe(command: AcknowledgeDriverReviewCommand): Promise<SaveResult> {

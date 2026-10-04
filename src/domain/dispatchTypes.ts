@@ -75,6 +75,16 @@ export type DriverDispatchSnapshot = {
   driverInstructions?: string
 }
 
+export type DriverReassignmentEvent = {
+  changeId: string
+  changedAt: string
+  changedBy: Actor
+  before: DriverDispatchSnapshot
+  after: DriverDispatchSnapshot
+  acknowledgedAt?: string
+  acknowledgedBy?: Actor
+}
+
 export type DispatchAssignment = {
   dispatchId: string
   reservationId: string
@@ -100,6 +110,8 @@ export type DispatchAssignment = {
   driverAcknowledgedDriverId?: string
   driverReservationSnapshotAtLastAcknowledgement?: DispatchReservationSnapshot
   driverDispatchSnapshotAtLastAcknowledgement?: DriverDispatchSnapshot
+  /** 主担当ドライバー変更の通知履歴。旧DBレコードとの互換性のため任意項目として扱う。 */
+  driverReassignmentHistory?: DriverReassignmentEvent[]
   driverInstructions?: string
   startedAt?: string
   startedBy?: Actor

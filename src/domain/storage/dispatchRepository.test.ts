@@ -56,6 +56,30 @@ describe('配車登録・変更・取消の保存', () => {
     repository.close()
   })
 
+  it('担当変更を旧担当者向け履歴へ残し、本人の確認を記録する', async () => {
+    const { repository, reservation, command } = await setup()
+    const created = await repository.createDispatch(command(10, 'create-driver-change-10'))
+    expect(created.kind).toBe('success')
+    let snapshot = await repository.snapshot()
+    let assignment = snapshot.dispatchAssignments.find((item) => item.reservationId === reservation(10).reservationId)!
+    const changed = await repository.updateDispatch({
+      ...command(10, 'change-driver-10'), dispatchId: assignment.dispatchId, expectedDispatchVersion: assignment.version,
+      vehicleId: assignment.vehicleId, primaryDriverId: 'demo-driver-002', driverInstructions: assignment.driverInstructions,
+    })
+    expect(changed.kind).toBe('success')
+    snapshot = await repository.snapshot()
+    assignment = snapshot.dispatchAssignments.find((item) => item.dispatchId === assignment.dispatchId)!
+    const event = assignment.driverReassignmentHistory?.[0]
+    expect(event).toMatchObject({ before: { primaryDriverId: 'demo-driver-001' }, after: { primaryDriverId: 'demo-driver-002' } })
+    expect((await repository.acknowledgeDriverReassignment({ generationId: snapshot.metadata!.generationId, idempotencyKey: 'wrong-driver-change-ack', actor: 'demo-driver:demo-driver-002', reservationId: reservation(10).reservationId, expectedReservationVersion: reservation(10).version, dispatchId: assignment.dispatchId, expectedDispatchVersion: assignment.version, changeId: event!.changeId })).kind).toBe('invalidDispatchTransition')
+    const acknowledged = await repository.acknowledgeDriverReassignment({ generationId: snapshot.metadata!.generationId, idempotencyKey: 'driver-change-ack', actor: 'demo-driver:demo-driver-001', reservationId: reservation(10).reservationId, expectedReservationVersion: reservation(10).version, dispatchId: assignment.dispatchId, expectedDispatchVersion: assignment.version, changeId: event!.changeId })
+    expect(acknowledged.kind).toBe('success')
+    assignment = (await repository.snapshot()).dispatchAssignments.find((item) => item.dispatchId === assignment.dispatchId)!
+    expect(assignment.driverReassignmentHistory?.[0]).toMatchObject({ acknowledgedBy: 'demo-driver:demo-driver-001' })
+    expect((await repository.snapshot()).auditLogs.some((item) => item.entityId === assignment.dispatchId && item.action === 'driverReassignmentAcknowledged')).toBe(true)
+    repository.close()
+  })
+
   it('予約状態・カテゴリー・日付・時刻・車両保留・担当者を保存時に検証する', async () => {
     const { repository, command } = await setup()
     expect((await repository.createDispatch(command(1, 'fluorescent'))).kind).toBe('reservationNotDispatchable')
