@@ -127,8 +127,8 @@ function DriverAssignmentDetail({ assignment, reservation, snapshot, onRefresh, 
     <ReviewInformation title="依頼時申告・目安" value={answerValue(reservation)} reviewChange={answerChange}><small>依頼者から受付時に申告された内容です。実際の回収量と異なる場合があります。</small></ReviewInformation>
     <ReviewInformation title="顧客からの連絡事項" value={reservation.contactNotes || 'なし'} reviewChange={contactNotesChange} />
     <ReviewInformation title="ドライバー向け指示" value={currentInstructions} reviewChange={instructionChange} />
+    {reviewPending && <section id="driver-change-confirm" className="driver-review-confirm"><strong>現在の内容を確認してください</strong><p>上に表示されている予定日時、回収先、依頼内容、連絡事項、車両、指示を確認してから押してください。</p><button type="button" disabled={acknowledging} onClick={acknowledge}>{acknowledging ? '保存中…' : '変更内容を確認しました'}</button></section>}
     {changeHistory.length > 0 && <DriverChangeHistory changes={changeHistory} pending={reviewPending} />}
-    {reviewPending && <section className="driver-review-confirm"><strong>変更内容を確認してください</strong><p>現在の予定日時、回収先、依頼内容、連絡事項、車両、指示を確認してから押してください。</p><button type="button" disabled={acknowledging} onClick={acknowledge}>{acknowledging ? '保存中…' : '変更内容を確認しました'}</button></section>}
     <div className="driver-work-actions">{assignment.status === 'assigned' && <button type="button" disabled={starting || blockedByVehicle || reviewPending} onClick={start}>{starting ? '記録中…' : '回収開始を記録'}</button>}<button type="button" disabled={blockedByVehicle || reviewPending} onClick={() => setOutcomeOpen(true)}>作業結果を登録</button>{reviewPending && <p className="driver-review-action-help">先に変更内容を確認してください。</p>}{assignment.status === 'assigned' && <p>開始記録は任意です。記録しなくても作業結果を登録できます。</p>}<p>同日・同じ車両・同じ主担当ドライバーで回収を続ける場合は、ここでは何も操作しません。</p></div>
     {outcomeOpen && <CollectionOutcomeDialog reservation={reservation} assignment={assignment} vehicleName={vehicleName(vehicle)} driverName={driverName(driver)} allowVehicleHold={false} onClose={() => setOutcomeOpen(false)} onSubmit={complete} />}
   </>

@@ -10,6 +10,7 @@ import {
   driverName,
   driverReviewRequired,
   driverReviewRevision,
+  timeRangesOverlap,
   vehicleName,
   normalizePhoneNumber,
   todayInJapan,
@@ -359,10 +360,32 @@ function DispatchEditor({ reservation, assignment, snapshot, onCancel, onSaved, 
   const [input, setInput] = useState<DispatchPlanInput>(initial)
   const [saving, setSaving] = useState(false)
   const dirty = JSON.stringify(input) !== JSON.stringify(initial)
-  const set = (key: keyof DispatchPlanInput, value: string) => setInput((current) => ({ ...current, [key]: value }))
+  const set = (key: keyof DispatchPlanInput, value: string) => { onError(undefined); setInput((current) => ({ ...current, [key]: value })) }
+  const activeAssignments = snapshot.dispatchAssignments.filter((item) => item.dispatchId !== assignment?.dispatchId && (item.status === 'assigned' || item.status === 'inProgress'))
+  const conflictingAssignment = (field: 'vehicleId' | 'primaryDriverId', value: string) => activeAssignments.find((item) => item[field] === value && timeRangesOverlap(item, input))
+  const conflictDescription = (item: DispatchAssignment) => {
+    const target = snapshot.reservations.find((candidate) => candidate.reservationId === item.reservationId)
+    return `${formatDate(item.plannedDate)} ${item.plannedStartTime}–${item.plannedEndTime}${target ? `・${target.reservationCode}` : ''}`
+  }
+  const validationErrors = validateDispatchPlan(input)
+  const selectedVehicle = snapshot.vehicles.find((item) => item.vehicleId === input.vehicleId)
+  const selectedDriver = snapshot.drivers.find((item) => item.driverId === input.primaryDriverId)
+  const vehicleConflict = input.vehicleId ? conflictingAssignment('vehicleId', input.vehicleId) : undefined
+  const driverConflict = input.primaryDriverId ? conflictingAssignment('primaryDriverId', input.primaryDriverId) : undefined
+  const issues = [
+    ...validationErrors,
+    ...(selectedVehicle && (!selectedVehicle.isActive || selectedVehicle.loadHold) ? [{ field: 'vehicleId', message: selectedVehicle.loadHold ? '選択した車両は搬入判断待ちまたは積み置き中です。' : '選択した車両は現在使用できません。' }] : []),
+    ...(selectedDriver && !selectedDriver.isActive ? [{ field: 'primaryDriverId', message: '選択した担当者は現在使用できません。' }] : []),
+    ...(vehicleConflict ? [{ field: 'vehicleId', message: `この車両は同じ時間帯に${conflictDescription(vehicleConflict)}で使用されています。別の車両または時間を選択してください。` }] : []),
+    ...(driverConflict ? [{ field: 'primaryDriverId', message: `この担当者は同じ時間帯に${conflictDescription(driverConflict)}を担当しています。別の担当者または時間を選択してください。` }] : []),
+  ]
+  const issueFor = (field: string) => issues.find((item) => item.field === field)?.message
+  const dateIssue = issueFor('plannedDate')
+  const timeIssue = issueFor('plannedTime')
+  const vehicleIssue = issueFor('vehicleId')
+  const driverIssue = issueFor('primaryDriverId')
   const save = async () => {
-    const errors = validateDispatchPlan(input)
-    if (errors.length > 0) { onError(errors[0].message); return }
+    if (issues.length > 0) return
     setSaving(true); onError(undefined)
     const common = { generationId: snapshot.metadata!.generationId, idempotencyKey: crypto.randomUUID(), actor: 'demo-admin' as const, reservationId: reservation.reservationId, expectedReservationVersion: reservation.version, ...input }
     const result = assignment ? await demoRepository.updateDispatch({ ...common, dispatchId: assignment.dispatchId, expectedDispatchVersion: assignment.version }) : await demoRepository.createDispatch(common)
@@ -371,7 +394,19 @@ function DispatchEditor({ reservation, assignment, snapshot, onCancel, onSaved, 
     setSaving(false)
   }
   const close = () => { if (dirty && !window.confirm('入力中の配車内容を破棄して戻りますか？')) return; onCancel() }
-  return <div className="dispatch-editor" aria-label={assignment ? '配車内容を変更' : '配車を登録'}><h4>{assignment ? '配車内容を変更' : '配車を登録'}</h4><div className="dispatch-editor-grid"><label>予定日<input type="date" value={input.plannedDate} onChange={(event) => set('plannedDate', event.target.value)} /></label><label>開始予定時刻<input type="time" value={input.plannedStartTime} onChange={(event) => set('plannedStartTime', event.target.value)} /></label><label>終了予定時刻<input type="time" value={input.plannedEndTime} onChange={(event) => set('plannedEndTime', event.target.value)} /></label><label>車両<select value={input.vehicleId} onChange={(event) => set('vehicleId', event.target.value)}><option value="">選択してください</option>{snapshot.vehicles.filter((item) => item.isActive).map((vehicle) => <option key={vehicle.vehicleId} value={vehicle.vehicleId} disabled={Boolean(vehicle.loadHold)}>{vehicleName(vehicle)}／{vehicle.vehicleType}{vehicle.capacityNote ? `／${vehicle.capacityNote}` : ''}{vehicle.loadHold ? `／${vehicle.loadHold.status === 'decisionPending' ? '搬入判断待ち' : '積み置き中'}・解除時刻未定` : ''}</option>)}</select><small>積載量は参考情報であり、自動的な適合保証ではありません。</small></label><label>主担当ドライバー<select value={input.primaryDriverId} onChange={(event) => set('primaryDriverId', event.target.value)}><option value="">選択してください</option>{snapshot.drivers.filter((item) => item.isActive).map((driver) => <option key={driver.driverId} value={driver.driverId}>{driverName(driver)}</option>)}</select></label><label className="dispatch-editor-wide">ドライバー向け指示<textarea rows={3} maxLength={500} value={input.driverInstructions ?? ''} onChange={(event) => set('driverInstructions', event.target.value)} /><small>{input.driverInstructions?.length ?? 0} / 500文字</small></label></div><div className="dispatch-editor-actions"><button type="button" onClick={close}>{dirty ? '入力を破棄して戻る' : '戻る'}</button><button type="button" className="inline-primary" disabled={saving} onClick={save}>{saving ? '保存中…' : assignment ? '変更を保存' : '配車を登録'}</button></div></div>
+  return <div className="dispatch-editor" aria-label={assignment ? '配車内容を変更' : '配車を登録'}>
+    <h4>{assignment ? '配車内容を変更' : '配車を登録'}</h4>
+    <div className="dispatch-editor-grid">
+      <div className="dispatch-editor-field"><label htmlFor="dispatch-date">予定日</label><input id="dispatch-date" type="date" value={input.plannedDate} aria-invalid={Boolean(dateIssue)} aria-describedby={dateIssue ? 'dispatch-date-error' : undefined} onChange={(event) => set('plannedDate', event.target.value)} />{dateIssue && <span id="dispatch-date-error" className="dispatch-field-error">{dateIssue}</span>}</div>
+      <div className="dispatch-editor-field"><label htmlFor="dispatch-start-time">開始予定時刻</label><input id="dispatch-start-time" type="time" value={input.plannedStartTime} aria-invalid={Boolean(timeIssue)} aria-describedby={timeIssue ? 'dispatch-time-error' : undefined} onChange={(event) => set('plannedStartTime', event.target.value)} />{timeIssue && <span id="dispatch-time-error" className="dispatch-field-error">{timeIssue}</span>}</div>
+      <div className="dispatch-editor-field"><label htmlFor="dispatch-end-time">終了予定時刻</label><input id="dispatch-end-time" type="time" value={input.plannedEndTime} aria-invalid={Boolean(timeIssue)} aria-describedby={timeIssue ? 'dispatch-time-error' : undefined} onChange={(event) => set('plannedEndTime', event.target.value)} /></div>
+      <div className="dispatch-editor-field"><label htmlFor="dispatch-vehicle">車両</label><select id="dispatch-vehicle" value={input.vehicleId} aria-invalid={Boolean(vehicleIssue)} aria-describedby={vehicleIssue ? 'dispatch-vehicle-error dispatch-vehicle-help' : 'dispatch-vehicle-help'} onChange={(event) => set('vehicleId', event.target.value)}><option value="">選択してください</option>{snapshot.vehicles.filter((item) => item.isActive).map((vehicle) => { const conflict = conflictingAssignment('vehicleId', vehicle.vehicleId); return <option key={vehicle.vehicleId} value={vehicle.vehicleId} disabled={Boolean(vehicle.loadHold || conflict)}>{vehicleName(vehicle)}／{vehicle.vehicleType}{vehicle.capacityNote ? `／${vehicle.capacityNote}` : ''}{vehicle.loadHold ? `／${vehicle.loadHold.status === 'decisionPending' ? '搬入判断待ち' : '積み置き中'}・解除時刻未定` : conflict ? `／同時間帯に${conflictDescription(conflict)}で使用中` : ''}</option> })}</select>{vehicleIssue && <span id="dispatch-vehicle-error" className="dispatch-field-error">{vehicleIssue}</span>}<small id="dispatch-vehicle-help">積載量は参考情報であり、自動的な適合保証ではありません。</small></div>
+      <div className="dispatch-editor-field"><label htmlFor="dispatch-driver">主担当ドライバー</label><select id="dispatch-driver" value={input.primaryDriverId} aria-invalid={Boolean(driverIssue)} aria-describedby={driverIssue ? 'dispatch-driver-error' : undefined} onChange={(event) => set('primaryDriverId', event.target.value)}><option value="">選択してください</option>{snapshot.drivers.filter((item) => item.isActive).map((driver) => { const conflict = conflictingAssignment('primaryDriverId', driver.driverId); return <option key={driver.driverId} value={driver.driverId} disabled={Boolean(conflict)}>{driverName(driver)}{conflict ? `／同時間帯に${conflictDescription(conflict)}を担当中` : ''}</option> })}</select>{driverIssue && <span id="dispatch-driver-error" className="dispatch-field-error">{driverIssue}</span>}</div>
+      <div className="dispatch-editor-field dispatch-editor-wide"><label htmlFor="dispatch-instructions">ドライバー向け指示</label><textarea id="dispatch-instructions" rows={3} maxLength={500} value={input.driverInstructions ?? ''} onChange={(event) => set('driverInstructions', event.target.value)} /><small>{input.driverInstructions?.length ?? 0} / 500文字</small></div>
+    </div>
+    {issues.length > 0 && <div id="dispatch-validation-summary" className="dispatch-validation-summary" role="alert"><strong>{assignment ? '配車の変更を保存できません' : '配車を登録できません'}</strong><ul>{issues.map((item, index) => <li key={`${item.field}-${index}`}>{item.message}</li>)}</ul></div>}
+    <div className="dispatch-editor-actions"><button type="button" onClick={close}>{dirty ? '入力を破棄して戻る' : '戻る'}</button><button type="button" className="inline-primary" disabled={saving || issues.length > 0} aria-describedby={issues.length > 0 ? 'dispatch-validation-summary' : undefined} onClick={save}>{saving ? '保存中…' : assignment ? '変更を保存' : '配車を登録'}</button></div>
+  </div>
 }
 
 type HoldAction = 'start' | 'confirm' | 'release'

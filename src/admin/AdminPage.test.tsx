@@ -193,6 +193,24 @@ describe('管理者画面', () => {
     expect(within(screen.getByRole('dialog', { name: 'DEMO-010' })).getByText('第1便・配車取消')).toBeInTheDocument()
   })
 
+  it('配車の必須項目が未選択なら理由を表示して登録を無効にする', async () => {
+    renderPage()
+    await startAdmin()
+    fireEvent.click(screen.getByRole('button', { name: '予約一覧' }))
+    fireEvent.change(screen.getByPlaceholderText('受付番号・会社名・担当者名・電話番号'), { target: { value: 'DEMO-010' } })
+    fireEvent.click(await screen.findByText('DEMO-010'))
+    const dialog = screen.getByRole('dialog', { name: 'DEMO-010' })
+    fireEvent.click(within(dialog).getByRole('button', { name: '配車を登録する' }))
+    const vehicle = within(dialog).getByLabelText(/^車両/)
+    const driver = within(dialog).getByLabelText('主担当ドライバー')
+    expect(vehicle).toHaveAttribute('aria-invalid', 'true')
+    expect(driver).toHaveAttribute('aria-invalid', 'true')
+    expect(within(vehicle.closest('.dispatch-editor-field')!).getByText('車両を選択してください。')).toBeInTheDocument()
+    expect(within(driver.closest('.dispatch-editor-field')!).getByText('担当者を選択してください。')).toBeInTheDocument()
+    expect(within(dialog).getByText('配車を登録できません')).toBeInTheDocument()
+    expect(within(dialog).getByRole('button', { name: '配車を登録' })).toBeDisabled()
+  })
+
   it('配車後の予約変更差分を確認済みにできる', async () => {
     renderPage()
     await startAdmin()
@@ -235,9 +253,9 @@ describe('管理者画面', () => {
     fireEvent.change(within(dialog).getByLabelText('予定日'), { target: { value: '2026-09-28' } })
     fireEvent.change(within(dialog).getByLabelText(/^車両/), { target: { value: 'demo-vehicle-001' } })
     fireEvent.change(within(dialog).getByLabelText('主担当ドライバー'), { target: { value: 'demo-driver-001' } })
-    fireEvent.click(within(dialog).getByRole('button', { name: '配車を登録' }))
-    expect(await within(dialog).findByText(/車両が2026年9月28日 09:00–10:00・DEMO-016と重複しています/)).toBeInTheDocument()
-    expect(within(dialog).getByRole('button', { name: '配車を登録' })).toBeInTheDocument()
+    expect(within(dialog).getAllByText(/この車両は同じ時間帯に2026年9月28日 09:00–10:00・DEMO-016で使用されています/).length).toBeGreaterThan(0)
+    expect(within(dialog).getByRole('option', { name: /DEMO-016で使用中/ })).toBeDisabled()
+    expect(within(dialog).getByRole('button', { name: '配車を登録' })).toBeDisabled()
   })
 
   it('既存予約のカテゴリーは変更できず、取消後の再受付を案内する', async () => {
