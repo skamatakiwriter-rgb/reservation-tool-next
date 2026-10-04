@@ -1359,7 +1359,8 @@ export class ReservationRepository {
     if (!current || current.reservationId !== reservation.reservationId) return abortSave(transaction, done, { kind: 'notFound' })
     if (current.version !== command.expectedDispatchVersion) return abortSave(transaction, done, { kind: 'dispatchVersionConflict' })
     const event = current.driverReassignmentHistory?.find((item) => item.changeId === command.changeId)
-    if (!event || event.acknowledgedAt || command.actor !== `demo-driver:${event.before.primaryDriverId}`) {
+    const latestForDriver = event ? [...(current.driverReassignmentHistory ?? [])].reverse().find((item) => item.before.primaryDriverId === event.before.primaryDriverId) : undefined
+    if (!event || event.acknowledgedAt || current.primaryDriverId === event.before.primaryDriverId || latestForDriver?.changeId !== event.changeId || command.actor !== `demo-driver:${event.before.primaryDriverId}`) {
       return abortSave(transaction, done, { kind: 'invalidDispatchTransition' })
     }
 

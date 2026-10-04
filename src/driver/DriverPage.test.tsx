@@ -122,11 +122,52 @@ describe('ドライバー画面', () => {
     fireEvent.click(within(notice).getByRole('button', { name: '担当変更を確認しました' }))
     await screen.findByText('担当変更を確認済みにしました。')
     expect(screen.queryByRole('button', { name: '担当変更を確認しました' })).not.toBeInTheDocument()
-    expect(screen.getByText('確認済みの担当変更（1件）')).toBeInTheDocument()
+    expect(screen.getByText('担当変更履歴（1件）')).toBeInTheDocument()
 
     fireEvent.change(screen.getByLabelText('架空ドライバー'), { target: { value: 'demo-driver-003' } })
     const newDriverList = screen.getByRole('region', { name: '架空 三郎の担当案件' })
     expect(within(newDriverList).getByText(/DEMO-016/)).toBeInTheDocument()
     expect(within(newDriverList).getByText('要確認')).toBeInTheDocument()
+  })
+
+  it('担当を戻して再変更しても最新状態だけを通知し、途中の変更は履歴へまとめる', async () => {
+    const current = await demoRepository.snapshot()
+    expect((await demoRepository.resetDemoData(current.metadata!.generationId)).kind).toBe('success')
+    const changeDriver = async (primaryDriverId: string) => {
+      const snapshot = await demoRepository.snapshot()
+      const reservation = snapshot.reservations.find((item) => item.reservationId === 'demo-reservation-016')!
+      const assignment = snapshot.dispatchAssignments.find((item) => item.reservationId === reservation.reservationId)!
+      const result = await demoRepository.updateDispatch({ generationId: snapshot.metadata!.generationId, idempotencyKey: crypto.randomUUID(), actor: 'demo-admin', reservationId: reservation.reservationId, expectedReservationVersion: reservation.version, dispatchId: assignment.dispatchId, expectedDispatchVersion: assignment.version, plannedDate: assignment.plannedDate, plannedStartTime: assignment.plannedStartTime, plannedEndTime: assignment.plannedEndTime, vehicleId: assignment.vehicleId, primaryDriverId, driverInstructions: assignment.driverInstructions })
+      expect(result.kind).toBe('success')
+      return assignment.plannedDate
+    }
+
+    await changeDriver('demo-driver-003')
+    const plannedDate = await changeDriver('demo-driver-001')
+    const firstView = render(<MemoryRouter><DriverPage /></MemoryRouter>)
+    fireEvent.change(await screen.findByLabelText('架空ドライバー'), { target: { value: 'demo-driver-001' } })
+    fireEvent.click(screen.getByRole('button', { name: '期間を指定' }))
+    fireEvent.change(screen.getByLabelText('開始日'), { target: { value: plannedDate } })
+    fireEvent.change(screen.getByLabelText('終了日'), { target: { value: plannedDate } })
+    const returnedList = screen.getByRole('region', { name: '架空 太郎の担当案件' })
+    expect(within(returnedList).getByText('再担当')).toBeInTheDocument()
+    expect(within(returnedList).getByText('要確認')).toBeInTheDocument()
+    const returnedHistory = screen.getByRole('region', { name: '担当変更のお知らせ' })
+    expect(returnedHistory).toHaveTextContent('DEMO-016は現在、再びあなたの担当です')
+    expect(returnedHistory).toHaveTextContent('後続の担当変更により、確認対象ではなくなりました。')
+    expect(within(returnedHistory).queryByRole('button', { name: '担当変更を確認しました' })).not.toBeInTheDocument()
+    firstView.unmount()
+
+    await changeDriver('demo-driver-002')
+    render(<MemoryRouter><DriverPage /></MemoryRouter>)
+    fireEvent.change(await screen.findByLabelText('架空ドライバー'), { target: { value: 'demo-driver-001' } })
+    fireEvent.click(screen.getByRole('button', { name: '期間を指定' }))
+    fireEvent.change(screen.getByLabelText('開始日'), { target: { value: plannedDate } })
+    fireEvent.change(screen.getByLabelText('終了日'), { target: { value: plannedDate } })
+    const notice = screen.getByRole('region', { name: '担当変更のお知らせ' })
+    expect(notice).toHaveTextContent('DEMO-016は、あなたの担当から外れました')
+    expect(notice).toHaveTextContent('この変更後の担当：架空 次郎')
+    expect(within(notice).getAllByRole('button', { name: '担当変更を確認しました' })).toHaveLength(1)
+    expect(notice).toHaveTextContent('担当変更履歴（1件）')
   })
 })
