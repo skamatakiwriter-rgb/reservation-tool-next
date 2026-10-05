@@ -209,7 +209,7 @@ describe('管理者画面', () => {
     expect(driver).toHaveAttribute('aria-invalid', 'true')
     expect(within(vehicle.closest('.dispatch-editor-field')!).getByText('車両を選択してください。')).toBeInTheDocument()
     expect(within(driver.closest('.dispatch-editor-field')!).getByText('担当者を選択してください。')).toBeInTheDocument()
-    expect(within(dialog).getByText('配車を登録できません')).toBeInTheDocument()
+    expect(within(dialog).queryByText('配車を登録できません')).not.toBeInTheDocument()
     expect(within(dialog).getByRole('button', { name: '配車を登録' })).toBeDisabled()
   })
 
@@ -255,7 +255,7 @@ describe('管理者画面', () => {
     fireEvent.change(within(dialog).getByLabelText('予定日'), { target: { value: '2026-09-28' } })
     fireEvent.change(within(dialog).getByLabelText(/^車両/), { target: { value: 'demo-vehicle-001' } })
     fireEvent.change(within(dialog).getByLabelText('主担当ドライバー'), { target: { value: 'demo-driver-001' } })
-    expect(within(dialog).getAllByText(/この車両は同じ時間帯に2026年9月28日 09:00–10:00・DEMO-016で使用されています/).length).toBeGreaterThan(0)
+    expect(within(dialog).getByText(/この車両は同じ時間帯に2026年9月28日 09:00–10:00・DEMO-016で使用されています/)).toBeInTheDocument()
     expect(within(dialog).getByRole('option', { name: /使用中：DEMO-016 09:00–10:00/ })).toBeDisabled()
     expect(within(dialog).getByRole('button', { name: '配車を登録' })).toBeDisabled()
   })
