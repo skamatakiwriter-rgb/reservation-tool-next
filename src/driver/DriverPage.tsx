@@ -37,8 +37,13 @@ export function DriverPage() {
   const reassignmentEntries = useMemo(() => {
     if (!snapshot || !driverId) return []
     return snapshot.dispatchAssignments.flatMap((assignment) => (assignment.driverReassignmentHistory ?? [])
-      .filter((event) => event.before.primaryDriverId === driverId && event.before.plannedDate >= fromDate && event.before.plannedDate <= toDate)
-      .map((event, eventIndex) => ({ assignment, event, eventIndex, reservation: reservationFor(snapshot.reservations, assignment) })))
+      .map((event, eventIndex) => ({ assignment, event, eventIndex, reservation: reservationFor(snapshot.reservations, assignment) }))
+      .filter((entry) => {
+        const removedFromDriver = entry.event.before.primaryDriverId === driverId
+        const assignedToDriver = entry.event.after.primaryDriverId === driverId
+        const relevantDate = removedFromDriver ? entry.event.before.plannedDate : entry.event.after.plannedDate
+        return (removedFromDriver || assignedToDriver) && relevantDate >= fromDate && relevantDate <= toDate
+      }))
       .filter((entry): entry is DriverReassignmentEntry => Boolean(entry.reservation))
       .sort((a, b) => b.event.changedAt.localeCompare(a.event.changedAt) || b.eventIndex - a.eventIndex)
   }, [driverId, fromDate, snapshot, toDate])
@@ -90,7 +95,7 @@ function DriverReassignmentNotices({ entries, driverId, snapshot, onRefresh, onM
   if (entries.length === 0) return null
   const currentNoticeByDispatch = new Map<string, DriverReassignmentEntry>()
   entries.forEach((entry) => {
-    if (entry.assignment.primaryDriverId !== driverId && !currentNoticeByDispatch.has(entry.assignment.dispatchId)) currentNoticeByDispatch.set(entry.assignment.dispatchId, entry)
+    if (entry.event.before.primaryDriverId === driverId && entry.assignment.primaryDriverId !== driverId && !currentNoticeByDispatch.has(entry.assignment.dispatchId)) currentNoticeByDispatch.set(entry.assignment.dispatchId, entry)
   })
   const pending = Array.from(currentNoticeByDispatch.values()).filter((entry) => !entry.event.acknowledgedAt)
   const pendingIds = new Set(pending.map((entry) => entry.event.changeId))
@@ -106,10 +111,13 @@ function DriverReassignmentNotices({ entries, driverId, snapshot, onRefresh, onM
     const previousDriver = snapshot.drivers.find((item) => item.driverId === entry.event.before.primaryDriverId)
     const nextDriver = snapshot.drivers.find((item) => item.driverId === entry.event.after.primaryDriverId)
     const currentDriver = snapshot.drivers.find((item) => item.driverId === entry.assignment.primaryDriverId)
-    const currentlyAssignedAgain = entry.assignment.primaryDriverId === driverId
+    const isCurrentAssignmentEvent = entry.assignment.primaryDriverId === driverId && entry.event.after.primaryDriverId === driverId && entry.eventIndex === (entry.assignment.driverReassignmentHistory?.length ?? 0) - 1
+    const wasAssignedEarlier = (entry.assignment.driverReassignmentHistory ?? []).slice(0, entry.eventIndex).some((event) => event.before.primaryDriverId === driverId || event.after.primaryDriverId === driverId)
+    const removedFromDriver = entry.event.before.primaryDriverId === driverId
     const scheduleChanged = entry.event.before.plannedDate !== entry.event.after.plannedDate || entry.event.before.plannedStartTime !== entry.event.after.plannedStartTime || entry.event.before.plannedEndTime !== entry.event.after.plannedEndTime
-    const title = currentlyAssignedAgain ? `${entry.reservation.reservationCode}は現在、再びあなたの担当です` : showButton ? `${entry.reservation.reservationCode}は、あなたの担当から外れました` : `${entry.reservation.reservationCode}の担当変更履歴`
-    return <article className={showButton ? 'pending' : 'acknowledged'} key={entry.event.changeId}><div><strong>{title}</strong><span>{entry.reservation.companyName}</span><span>以前の予定：{formatDate(entry.event.before.plannedDate)} {entry.event.before.plannedStartTime}–{entry.event.before.plannedEndTime}</span>{showButton ? <span>現在の担当：{driverName(currentDriver)}</span> : <span>担当変更時：{driverName(previousDriver)} → {driverName(nextDriver)}</span>}{scheduleChanged && <span>この変更後の予定：{formatDate(entry.event.after.plannedDate)} {entry.event.after.plannedStartTime}–{entry.event.after.plannedEndTime}</span>}<small>変更：{formatDateTime(entry.event.changedAt)}</small>{entry.event.acknowledgedAt ? <small>確認：{formatDateTime(entry.event.acknowledgedAt)}</small> : !showButton && <small>後続の担当変更により、確認対象ではなくなりました。</small>}</div>{showButton && <button type="button" disabled={Boolean(acknowledgingId)} onClick={() => acknowledge(entry)}>{acknowledgingId === entry.event.changeId ? '保存中…' : '担当変更を確認しました'}</button>}</article>
+    const title = isCurrentAssignmentEvent ? `${entry.reservation.reservationCode}は${driverName(previousDriver)}から、${wasAssignedEarlier ? '再び' : ''}あなたの担当になりました` : showButton ? `${entry.reservation.reservationCode}は、あなたの担当から外れました` : `${entry.reservation.reservationCode}の担当変更履歴`
+    const schedule = isCurrentAssignmentEvent ? `${formatDate(entry.assignment.plannedDate)} ${entry.assignment.plannedStartTime}–${entry.assignment.plannedEndTime}` : `${formatDate(entry.event.before.plannedDate)} ${entry.event.before.plannedStartTime}–${entry.event.before.plannedEndTime}`
+    return <article className={showButton ? 'pending' : 'acknowledged'} key={entry.event.changeId}><div><strong>{title}</strong><span>{entry.reservation.companyName}</span><span>{isCurrentAssignmentEvent ? '現在の予定' : '変更前の予定'}：{schedule}</span>{showButton ? <span>現在の担当：{driverName(currentDriver)}</span> : <span>担当変更時：{driverName(previousDriver)} → {driverName(nextDriver)}</span>}{!isCurrentAssignmentEvent && scheduleChanged && <span>変更後の予定：{formatDate(entry.event.after.plannedDate)} {entry.event.after.plannedStartTime}–{entry.event.after.plannedEndTime}</span>}<small>変更：{formatDateTime(entry.event.changedAt)}</small>{entry.event.acknowledgedAt ? <small>確認：{formatDateTime(entry.event.acknowledgedAt)}</small> : !showButton && removedFromDriver && <small>後続の担当変更により、確認対象ではなくなりました。</small>}</div>{showButton && <button type="button" disabled={Boolean(acknowledgingId)} onClick={() => acknowledge(entry)}>{acknowledgingId === entry.event.changeId ? '保存中…' : '担当変更を確認しました'}</button>}</article>
   }
   return <section className={`driver-reassignment-notices ${pending.length > 0 ? 'has-pending' : ''}`} aria-label="担当変更のお知らせ"><header><div><span>担当変更</span><h2>{pending.length > 0 ? '担当変更のお知らせ' : '担当変更履歴'}</h2></div>{pending.length > 0 && <strong>未確認 {pending.length}件</strong>}</header>{error && <div className="error-summary" role="alert">{error}</div>}{pending.map((entry) => content(entry, true))}{history.length > 0 && <details><summary>担当変更履歴（{history.length}件）</summary>{history.map((entry) => content(entry, false))}</details>}</section>
 }
