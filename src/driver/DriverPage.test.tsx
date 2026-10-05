@@ -177,4 +177,47 @@ describe('ドライバー画面', () => {
     expect(within(notice).getAllByRole('button', { name: '担当変更を確認しました' })).toHaveLength(1)
     expect(notice).toHaveTextContent('担当変更履歴（2件）')
   })
+
+  it('予定日をまたいで再変更した場合も古い解除履歴を確認対象へ戻さない', async () => {
+    const current = await demoRepository.snapshot()
+    expect((await demoRepository.resetDemoData(current.metadata!.generationId)).kind).toBe('success')
+    let snapshot = await demoRepository.snapshot()
+    let reservation = snapshot.reservations.find((item) => item.reservationId === 'demo-reservation-016')!
+    let assignment = snapshot.dispatchAssignments.find((item) => item.reservationId === reservation.reservationId)!
+    const updateDispatch = async (primaryDriverId: string, plannedDate: string) => {
+      const result = await demoRepository.updateDispatch({ generationId: snapshot.metadata!.generationId, idempotencyKey: crypto.randomUUID(), actor: 'demo-admin', reservationId: reservation.reservationId, expectedReservationVersion: reservation.version, dispatchId: assignment.dispatchId, expectedDispatchVersion: assignment.version, plannedDate, plannedStartTime: assignment.plannedStartTime, plannedEndTime: assignment.plannedEndTime, vehicleId: assignment.vehicleId, primaryDriverId, driverInstructions: assignment.driverInstructions })
+      expect(result.kind).toBe('success')
+      snapshot = await demoRepository.snapshot()
+      reservation = snapshot.reservations.find((item) => item.reservationId === reservation.reservationId)!
+      assignment = snapshot.dispatchAssignments.find((item) => item.dispatchId === assignment.dispatchId)!
+    }
+
+    const oldDate = assignment.plannedDate
+    await updateDispatch('demo-driver-003', oldDate)
+    const newDate = '2026-09-29'
+    const reservationChanged = await demoRepository.updateReservation({
+      generationId: snapshot.metadata!.generationId,
+      idempotencyKey: crypto.randomUUID(),
+      actor: 'demo-admin',
+      reservationId: reservation.reservationId,
+      expectedVersion: reservation.version,
+      input: { categoryId: reservation.categoryId, requestedDate: newDate, companyName: reservation.companyName, contactName: reservation.contactName, phone: reservation.phoneDisplay, address: reservation.address, contactNotes: reservation.contactNotes, categoryAnswers: reservation.categoryAnswers },
+    })
+    expect(reservationChanged.kind).toBe('success')
+    snapshot = await demoRepository.snapshot()
+    reservation = snapshot.reservations.find((item) => item.reservationId === reservation.reservationId)!
+    assignment = snapshot.dispatchAssignments.find((item) => item.dispatchId === assignment.dispatchId)!
+    await updateDispatch('demo-driver-001', newDate)
+    await updateDispatch('demo-driver-002', newDate)
+
+    render(<MemoryRouter><DriverPage /></MemoryRouter>)
+    fireEvent.change(await screen.findByLabelText('架空ドライバー'), { target: { value: 'demo-driver-001' } })
+    fireEvent.click(screen.getByRole('button', { name: '期間を指定' }))
+    fireEvent.change(screen.getByLabelText('開始日'), { target: { value: oldDate } })
+    fireEvent.change(screen.getByLabelText('終了日'), { target: { value: oldDate } })
+    const history = screen.getByRole('region', { name: '担当変更のお知らせ' })
+    expect(history).toHaveTextContent('担当変更履歴')
+    expect(history).toHaveTextContent('後続の担当変更により、確認対象ではなくなりました。')
+    expect(within(history).queryByRole('button', { name: '担当変更を確認しました' })).not.toBeInTheDocument()
+  })
 })

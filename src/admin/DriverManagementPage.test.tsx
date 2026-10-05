@@ -45,4 +45,16 @@ describe('ドライバー管理画面', () => {
     expect(await screen.findByText(/未完了の配車が残っているため無効にできません/)).toBeInTheDocument()
     await waitFor(() => expect(within(code.closest('tr')!).getByText('有効')).toBeInTheDocument())
   })
+
+  it('登録画面へフォーカスを移し、Escで閉じて呼出元へ戻す', async () => {
+    render(<MemoryRouter><DriverManagementPage /></MemoryRouter>)
+    const opener = await screen.findByRole('button', { name: 'ドライバーを登録' })
+    opener.focus()
+    fireEvent.click(opener)
+    const dialog = screen.getByRole('dialog', { name: 'ドライバーを登録' })
+    expect(dialog).toHaveFocus()
+    fireEvent.keyDown(dialog, { key: 'Escape' })
+    expect(screen.queryByRole('dialog', { name: 'ドライバーを登録' })).not.toBeInTheDocument()
+    expect(opener).toHaveFocus()
+  })
 })

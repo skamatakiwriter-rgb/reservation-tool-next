@@ -4,6 +4,7 @@ import { driverName, type Driver, type DriverInput, type SaveResult } from '../d
 import { PageHelp } from '../guide/PageHelp'
 import { publishDemoChange } from '../reserve/demoSync'
 import { demoRepository, useDemoData } from '../reserve/useDemoData'
+import { useModalFocus } from '../useModalFocus'
 
 type DriverEditorState = { mode: 'create' } | { mode: 'edit'; driver: Driver }
 
@@ -70,6 +71,7 @@ export function DriverManagementPage() {
 }
 
 function DriverEditor({ state, generationId, onClose, onSaved }: { state: DriverEditorState; generationId: string; onClose: () => void; onSaved: (message: string, driverId?: string) => Promise<void> }) {
+  useModalFocus(onClose, 'driver-editor-title')
   const editing = state.mode === 'edit' ? state.driver : undefined
   const [fullName, setFullName] = useState(editing ? driverName(editing) : '')
   const [notes, setNotes] = useState(editing?.notes ?? '')

@@ -50,4 +50,16 @@ describe('車両管理画面', () => {
     fireEvent.click(within(heldCode.closest('tr')!).getByRole('button', { name: '無効にする' }))
     expect(await screen.findByText(/積み置き中のため無効にできません/)).toBeInTheDocument()
   })
+
+  it('登録画面へフォーカスを移し、Escで閉じて呼出元へ戻す', async () => {
+    render(<MemoryRouter><VehicleManagementPage /></MemoryRouter>)
+    const opener = await screen.findByRole('button', { name: '車両を登録' })
+    opener.focus()
+    fireEvent.click(opener)
+    const dialog = screen.getByRole('dialog', { name: '車両を登録' })
+    expect(dialog).toHaveFocus()
+    fireEvent.keyDown(dialog, { key: 'Escape' })
+    expect(screen.queryByRole('dialog', { name: '車両を登録' })).not.toBeInTheDocument()
+    expect(opener).toHaveFocus()
+  })
 })

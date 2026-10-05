@@ -37,13 +37,13 @@ export function DriverPage() {
   const reassignmentEntries = useMemo(() => {
     if (!snapshot || !driverId) return []
     return snapshot.dispatchAssignments.flatMap((assignment) => (assignment.driverReassignmentHistory ?? [])
-      .map((event, eventIndex) => ({ assignment, event, eventIndex, reservation: reservationFor(snapshot.reservations, assignment) }))
-      .filter((entry) => {
-        const removedFromDriver = entry.event.before.primaryDriverId === driverId
-        const assignedToDriver = entry.event.after.primaryDriverId === driverId
-        const relevantDate = removedFromDriver ? entry.event.before.plannedDate : entry.event.after.plannedDate
-        return (removedFromDriver || assignedToDriver) && relevantDate >= fromDate && relevantDate <= toDate
-      }))
+      .map((event, eventIndex) => {
+        const removedFromDriver = event.before.primaryDriverId === driverId
+        const assignedToDriver = event.after.primaryDriverId === driverId
+        const relevantDate = removedFromDriver ? event.before.plannedDate : event.after.plannedDate
+        return { assignment, event, eventIndex, reservation: reservationFor(snapshot.reservations, assignment), involvesDriver: removedFromDriver || assignedToDriver, inRange: relevantDate >= fromDate && relevantDate <= toDate }
+      })
+      .filter((entry) => entry.involvesDriver))
       .filter((entry): entry is DriverReassignmentEntry => Boolean(entry.reservation))
       .sort((a, b) => b.event.changedAt.localeCompare(a.event.changedAt) || b.eventIndex - a.eventIndex)
   }, [driverId, fromDate, snapshot, toDate])
@@ -87,19 +87,20 @@ export function DriverPage() {
   </div>
 }
 
-type DriverReassignmentEntry = { assignment: DispatchAssignment; event: DriverReassignmentEvent; eventIndex: number; reservation: Reservation }
+type DriverReassignmentEntry = { assignment: DispatchAssignment; event: DriverReassignmentEvent; eventIndex: number; reservation: Reservation; involvesDriver: boolean; inRange: boolean }
 
 function DriverReassignmentNotices({ entries, driverId, snapshot, onRefresh, onMessage }: { entries: DriverReassignmentEntry[]; driverId: string; snapshot: DemoSnapshot; onRefresh: () => Promise<void>; onMessage: (message: string) => void }) {
   const [acknowledgingId, setAcknowledgingId] = useState<string>()
   const [error, setError] = useState<string>()
-  if (entries.length === 0) return null
+  const visibleEntries = entries.filter((entry) => entry.inRange)
+  if (visibleEntries.length === 0) return null
   const currentNoticeByDispatch = new Map<string, DriverReassignmentEntry>()
   entries.forEach((entry) => {
     if (entry.event.before.primaryDriverId === driverId && entry.assignment.primaryDriverId !== driverId && !currentNoticeByDispatch.has(entry.assignment.dispatchId)) currentNoticeByDispatch.set(entry.assignment.dispatchId, entry)
   })
-  const pending = Array.from(currentNoticeByDispatch.values()).filter((entry) => !entry.event.acknowledgedAt)
+  const pending = Array.from(currentNoticeByDispatch.values()).filter((entry) => entry.inRange && !entry.event.acknowledgedAt)
   const pendingIds = new Set(pending.map((entry) => entry.event.changeId))
-  const history = entries.filter((entry) => !pendingIds.has(entry.event.changeId))
+  const history = visibleEntries.filter((entry) => !pendingIds.has(entry.event.changeId))
   const acknowledge = async (entry: DriverReassignmentEntry) => {
     setAcknowledgingId(entry.event.changeId); setError(undefined)
     const result = await demoRepository.acknowledgeDriverReassignment({ generationId: snapshot.metadata!.generationId, idempotencyKey: crypto.randomUUID(), actor: `demo-driver:${driverId}`, reservationId: entry.reservation.reservationId, expectedReservationVersion: entry.reservation.version, dispatchId: entry.assignment.dispatchId, expectedDispatchVersion: entry.assignment.version, changeId: entry.event.changeId })

@@ -4,6 +4,7 @@ import { vehicleName, type SaveResult, type Vehicle, type VehicleInput } from '.
 import { PageHelp } from '../guide/PageHelp'
 import { publishDemoChange } from '../reserve/demoSync'
 import { demoRepository, useDemoData } from '../reserve/useDemoData'
+import { useModalFocus } from '../useModalFocus'
 
 type VehicleEditorState = { mode: 'create' } | { mode: 'edit'; vehicle: Vehicle }
 
@@ -70,6 +71,7 @@ export function VehicleManagementPage() {
 }
 
 function VehicleEditor({ state, generationId, onClose, onSaved }: { state: VehicleEditorState; generationId: string; onClose: () => void; onSaved: (message: string, vehicleId?: string) => Promise<void> }) {
+  useModalFocus(onClose, 'vehicle-editor-title')
   const editing = state.mode === 'edit' ? state.vehicle : undefined
   const [registrationNumber, setRegistrationNumber] = useState(editing ? vehicleName(editing) : '')
   const [vehicleType, setVehicleType] = useState(editing?.vehicleType ?? '')
