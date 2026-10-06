@@ -1,10 +1,10 @@
-# 予約管理ツール — Ver1公開デモ／Ver2開発ブランチ
+# 予約管理ツール — Ver2公開デモ
 
 蛍光管持込・家具家財撤去・ビン缶回収を題材に、利用者の申込みと管理者の受付業務を一つにつないだポートフォリオ作品です。カテゴリーごとの受付方法、日別の予約枠、変更・取消・再受付の履歴まで確認できます。
 
-**[Ver1公開デモを開く](https://reservation-tool-next-demo.netlify.app/)** · [利用者画面](https://reservation-tool-next-demo.netlify.app/reserve) · [管理者画面](https://reservation-tool-next-demo.netlify.app/admin)
+**[Ver2公開デモを開く](https://reservation-tool-next-demo.netlify.app/)** · [利用者画面](https://reservation-tool-next-demo.netlify.app/reserve) · [予約・配車管理](https://reservation-tool-next-demo.netlify.app/admin) · [ドライバー画面](https://reservation-tool-next-demo.netlify.app/driver)
 
-> `main`と上記URLはVer1です。`feature/v2-dispatch-management`では配車・回収管理を追加したVer2をローカル実装中で、まだ公開していません。
+> `main`と上記URLはVer2です。Ver1完成時点は`v1.0.0`タグで確認できます。
 
 ![カテゴリー別の予約状況と選択日の予約を確認できる管理カレンダー](docs/images/02-admin-calendar.png)
 
@@ -37,7 +37,7 @@
 - 受付設定：カテゴリー別上限、日付別受付停止、過去日の未完了予約の案内
 - 保存：IndexedDB、同一ブラウザの複数タブへの変更通知、初期状態への復元、データ削除
 
-### Ver2開発ブランチで追加した機能
+### Ver2で追加した機能
 
 - 予約状態とは別の配車状況、配車予定日による絞り込み、配車・回収状況の集計
 - 予約詳細内での車両・主担当ドライバー割当、変更、作業前取消、再配車
@@ -109,14 +109,14 @@ npm run preview
 
 Ver1は2026年9月18日に、型検査・自動テスト9ファイル74件・Lint・本番ビルドが合格しました。検査範囲は[Ver1確認記録](docs/verification.md)を参照してください。
 
-Ver2開発ブランチは2026年10月5日に、自動テスト24ファイル169件・Lint・本番ビルドが合格しました。これはローカル公開候補の確認であり、公開URLの確認や実運用適合性の保証ではありません。
+Ver2は2026年10月6日に、自動テスト24ファイル169件・Lint・本番ビルドが合格しました。Netlify公開後に主要URLの直接アクセス、SPAフォールバック、応答セキュリティヘッダー、管理画面とドライバー画面の表示を確認しています。これはポートフォリオ用公開デモの確認であり、実運用適合性を保証するものではありません。
 
 ## 公開とバージョン
 
-GitHubの `main` をNetlifyに連携しています。現在の公開対象はVer1です。ビルドは `npm run build`、公開先は `dist`。`netlify.toml` でSPAの直接アクセスを処理します。
+GitHubの `main` をNetlifyに連携し、Ver2を自動公開しています。ビルドは `npm run build`、公開先は `dist`。`netlify.toml` でSPAの直接アクセスを処理します。
 
-`v1.0.0` は完成時点のソース・説明資料・画像を固定するGitタグです。公開デモURLは `main` の更新に追従するため、将来もv1.0.0のままとは限りません。変更は新しいコミット・バージョンで記録し、公開済みタグを付け替えません。
+`v1.0.0`はVer1完成時点、`v2.0.0`はVer2公開確認後のソース・説明資料・画像を固定するGitタグです。公開済みタグは付け替えません。
 
-Ver2は`feature/v2-dispatch-management`で実装しています。公開ブランチ、Netlifyサイト、`v2.0.0`タグはローカル最終受入後の別工程で決定します。
+Ver2は`feature/v2-dispatch-management`で実装し、ローカル受入後に`main`へfast-forwardで統合しました。既存のNetlifyサイトとURLを引き継ぎ、Ver1完成時点は`v1.0.0`タグで保全しています。
 
 [変更履歴](CHANGELOG.md) · [制作紹介](docs/portfolio.md) · [GitHub](https://github.com/skamatakiwriter-rgb/reservation-tool-next)
